@@ -1,14 +1,16 @@
 import { randomUUID } from "node:crypto";
 import type { EventBus } from "@earendil-works/pi-coding-agent";
-import type { SubagentDelegationRequest, SubagentDelegationStatus } from "pi-subagents/delegation";
 import type { TSchema } from "typebox";
 import type { AgentUsage } from "./agent.js";
 import type { AgentHistoryEntry } from "./agent-history.js";
 import { classifyProviderLimit, WorkflowError, WorkflowErrorCode } from "./errors.js";
 
 export const PI_SUBAGENTS_PROTOCOL_VERSION = 1 as const;
-/** Releases exercised by the real-parser/bridge conformance fixtures. */
-export const PI_SUBAGENTS_COMPATIBILITY_RANGE = ">=0.35.1 <0.38.0" as const;
+export const PI_SUBAGENTS_REVIEWED_COMMIT = "b77781ea926203b32af8fad439432e5cef2aae5f" as const;
+export const PI_SUBAGENTS_PROVIDER_ID = "pi-subagents/prompt-template-bridge" as const;
+export const PI_SUBAGENTS_PROVIDER_PACKAGE = "pi-subagents" as const;
+/** Package metadata reported by the exact reviewed fork commit; this is not a release claim. */
+export const PI_SUBAGENTS_PROVIDER_PACKAGE_VERSION = "0.37.0" as const;
 export const PI_SUBAGENTS_REQUEST_EVENT = "prompt-template:subagent:request";
 export const PI_SUBAGENTS_STARTED_EVENT = "prompt-template:subagent:started";
 export const PI_SUBAGENTS_UPDATE_EVENT = "prompt-template:subagent:update";
@@ -36,6 +38,66 @@ export interface PiSubagentsRunOptions {
   onUsage?: (usage: AgentUsage) => void;
   onHistory?: (history: AgentHistoryEntry[]) => void;
   onDiagnostics?: (details: PiSubagentsDiagnosticDetails) => void;
+}
+
+type SubagentDelegationStatus =
+  | "completed"
+  | "failed"
+  | "timed_out"
+  | "cancelled"
+  | "interrupted"
+  | "turn_budget_exhausted"
+  | "tool_budget_exhausted"
+  | "structured_output_failed"
+  | "acceptance_failed"
+  | "invalid_request"
+  | "unavailable_context";
+
+interface SubagentDelegationProviderDescriptor {
+  readonly providerId: string;
+  readonly packageName: string;
+  readonly packageVersion: string;
+  readonly generation: number;
+  readonly protocols: readonly {
+    readonly version: 1 | 2;
+    readonly terminalStatuses: readonly string[];
+    readonly requestFields: Readonly<Record<string, boolean>>;
+  }[];
+  readonly cancellation: Readonly<{
+    supported: boolean;
+    preCancellation: boolean;
+    identity: "requestId" | "requestId+ownerRunId+nodeId" | "protocol-specific";
+  }>;
+  readonly concurrency: Readonly<{
+    semantics: string;
+    maximumConcurrentRequests: number | null;
+    v1DuplicateIdentity: string;
+  }>;
+}
+
+interface SubagentDelegationProviderRegistry {
+  readonly providers: WeakMap<object, SubagentDelegationProviderDescriptor>;
+}
+
+interface SubagentDelegationRequest {
+  version: 1;
+  requestId: string;
+  agent: string;
+  task: string;
+  context: "fresh" | "fork";
+  cwd: string;
+  model?: string;
+  timeoutMs?: number;
+}
+
+const DELEGATION_PROVIDER_REGISTRY = Symbol.for("pi-subagents.delegation-provider-registry.v1");
+
+/** Read the exact process-global discovery registry exposed by the reviewed fork API. */
+function getSubagentDelegationProvider(context: object): SubagentDelegationProviderDescriptor | undefined {
+  const registry = (globalThis as Record<PropertyKey, unknown>)[DELEGATION_PROVIDER_REGISTRY] as
+    | SubagentDelegationProviderRegistry
+    | undefined;
+  return registry?.providers.get(context);
 }
 
 type TerminalStatus = SubagentDelegationStatus;
@@ -175,10 +237,29 @@ function validKnownJson(value: unknown, depth = 0): boolean {
 
 /** Narrow optional adapter over pi-subagents' public v1 foreground delegation protocol. */
 export class PiSubagentsBackend {
+  private negotiated?: { generation: number; descriptor: SubagentDelegationProviderDescriptor };
+
   constructor(
     private readonly events: EventBus | undefined,
     private readonly handshakeTimeoutMs = 2_000,
   ) {}
+
+  /** Discover and negotiate synchronously; request acknowledgement remains separate. */
+  negotiate(options: Pick<PiSubagentsRunOptions, "model" | "timeoutMs"> = {}): SubagentDelegationProviderDescriptor {
+    if (!this.events) throw unavailableProvider("no Pi EventBus was supplied");
+    const descriptor = getSubagentDelegationProvider(this.events);
+    if (!descriptor) {
+      throw unavailableProvider(
+        "provider discovery is unavailable (stock pi-subagents 0.35.1 and 0.37.0 do not expose the reviewed fork contract)",
+      );
+    }
+    if (this.negotiated?.generation !== descriptor.generation) {
+      validateProviderDescriptor(descriptor);
+      this.negotiated = { generation: descriptor.generation, descriptor };
+    }
+    validateRequestedFields(this.negotiated.descriptor, options);
+    return this.negotiated.descriptor;
+  }
 
   run(prompt: string, options: PiSubagentsRunOptions): Promise<string> {
     if (options.schema) {
@@ -199,14 +280,10 @@ export class PiSubagentsBackend {
         ),
       );
     }
-    if (!this.events) {
-      return Promise.reject(
-        new WorkflowError(
-          'backend "pi-subagents" is not available in the same Pi process; install/enable a compatible pi-subagents bridge or select backend "native"',
-          WorkflowErrorCode.AGENT_EXECUTION_ERROR,
-          { recoverable: false },
-        ),
-      );
+    try {
+      this.negotiate(options);
+    } catch (error) {
+      return Promise.reject(error);
     }
     if (!prompt.trim() || !options.cwd.trim()) {
       return Promise.reject(
@@ -221,6 +298,7 @@ export class PiSubagentsBackend {
     }
 
     const events = this.events;
+    if (!events) return Promise.reject(unavailableProvider("no Pi EventBus was supplied"));
     const requestId = randomUUID();
     const history: AgentHistoryEntry[] = [];
     const delegatedTimeoutMs =
@@ -474,6 +552,86 @@ export class PiSubagentsBackend {
         );
       }
     });
+  }
+}
+
+const SUPPORTED_TERMINAL_STATUSES = new Set<SubagentDelegationStatus>([
+  "completed",
+  "failed",
+  "timed_out",
+  "cancelled",
+  "interrupted",
+  "turn_budget_exhausted",
+  "tool_budget_exhausted",
+  "structured_output_failed",
+  "acceptance_failed",
+  "invalid_request",
+  "unavailable_context",
+]);
+
+function unavailableProvider(reason: string): WorkflowError {
+  return new WorkflowError(
+    `backend "pi-subagents" is unavailable: ${reason}; enable Nabsku/pi-subagents@${PI_SUBAGENTS_REVIEWED_COMMIT} in the same Pi process or select backend "native"`,
+    WorkflowErrorCode.AGENT_EXECUTION_ERROR,
+    { recoverable: false },
+  );
+}
+
+function providerDrift(message: string): never {
+  throw unavailableProvider(`provider capability negotiation failed: ${message}`);
+}
+
+function validateProviderDescriptor(descriptor: SubagentDelegationProviderDescriptor): void {
+  if (descriptor.providerId !== PI_SUBAGENTS_PROVIDER_ID)
+    providerDrift(`unexpected providerId ${JSON.stringify(descriptor.providerId)}`);
+  if (descriptor.packageName !== PI_SUBAGENTS_PROVIDER_PACKAGE)
+    providerDrift(`unexpected packageName ${JSON.stringify(descriptor.packageName)}`);
+  if (descriptor.packageVersion !== PI_SUBAGENTS_PROVIDER_PACKAGE_VERSION) {
+    providerDrift(
+      `package version drifted from reviewed metadata ${PI_SUBAGENTS_PROVIDER_PACKAGE_VERSION} to ${JSON.stringify(descriptor.packageVersion)}`,
+    );
+  }
+  if (!Number.isSafeInteger(descriptor.generation) || descriptor.generation <= 0)
+    providerDrift("invalid provider generation");
+
+  const protocol = descriptor.protocols.find(({ version }) => version === PI_SUBAGENTS_PROTOCOL_VERSION);
+  if (!protocol) providerDrift("delegation protocol v1 is not advertised");
+  const statuses = new Set(protocol.terminalStatuses);
+  if (
+    statuses.size !== SUPPORTED_TERMINAL_STATUSES.size ||
+    [...SUPPORTED_TERMINAL_STATUSES].some((status) => !statuses.has(status))
+  ) {
+    providerDrift("delegation v1 terminal statuses differ from the reviewed contract");
+  }
+  if (!protocol.requestFields.textResult) providerDrift("delegation v1 does not support text results");
+
+  if (
+    !descriptor.cancellation.supported ||
+    !descriptor.cancellation.preCancellation ||
+    (descriptor.cancellation.identity !== "requestId" && descriptor.cancellation.identity !== "protocol-specific")
+  ) {
+    providerDrift("cancellation semantics differ from the reviewed requestId contract");
+  }
+  if (
+    descriptor.concurrency.semantics !== "v1-request-id-v2-owner-node" ||
+    descriptor.concurrency.maximumConcurrentRequests !== null ||
+    descriptor.concurrency.v1DuplicateIdentity !== "ignored"
+  ) {
+    providerDrift("concurrency semantics differ from the reviewed unbounded v1 requestId contract");
+  }
+}
+
+function validateRequestedFields(
+  descriptor: SubagentDelegationProviderDescriptor,
+  options: Pick<PiSubagentsRunOptions, "model" | "timeoutMs">,
+): void {
+  const requestFields = descriptor.protocols.find(
+    ({ version }) => version === PI_SUBAGENTS_PROTOCOL_VERSION,
+  )?.requestFields;
+  if (!requestFields) providerDrift("delegation protocol v1 disappeared from the cached descriptor");
+  if (options.model && !requestFields.model) providerDrift("delegation v1 does not support requested model routing");
+  if (typeof options.timeoutMs === "number" && options.timeoutMs > 0 && !requestFields.timeout) {
+    providerDrift("delegation v1 does not support requested timeout forwarding");
   }
 }
 

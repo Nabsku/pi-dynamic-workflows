@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createEventBus, type EventBus } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_SUBAGENT_DELEGATION_PROVIDER, registerSubagentDelegationProvider } from "pi-subagents/delegation";
 import { WorkflowAgent } from "../src/agent.js";
 import { WorkflowError } from "../src/errors.js";
 import {
@@ -21,6 +22,12 @@ const response = (requestId: string, extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
+function reviewedBus(): EventBus {
+  const bus = createEventBus();
+  registerSubagentDelegationProvider(bus, DEFAULT_SUBAGENT_DELEGATION_PROVIDER);
+  return bus;
+}
+
 function listenerCountingBus() {
   const inner = createEventBus();
   let listeners = 0;
@@ -35,6 +42,7 @@ function listenerCountingBus() {
       };
     },
   };
+  registerSubagentDelegationProvider(bus, DEFAULT_SUBAGENT_DELEGATION_PROVIDER);
   return { bus, count: () => listeners };
 }
 
@@ -96,7 +104,7 @@ test("pi-subagents backend sends only protocol v1 and maps start/update/usage/hi
 });
 
 test("pi-subagents backend deduplicates repeated progress and terminal output", async () => {
-  const bus = createEventBus();
+  const bus = reviewedBus();
   const histories: any[][] = [];
   bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
     bus.emit(PI_SUBAGENTS_UPDATE_EVENT, { version: 1, requestId: raw.requestId, recentOutput: "same" });
@@ -111,7 +119,7 @@ test("pi-subagents backend deduplicates repeated progress and terminal output", 
 });
 
 test("pi-subagents backend uses the exact agentType as role", async () => {
-  const bus = createEventBus();
+  const bus = reviewedBus();
   let role = "";
   bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
     role = raw.agent;
@@ -122,7 +130,7 @@ test("pi-subagents backend uses the exact agentType as role", async () => {
 });
 
 test("pi-subagents backend normalizes fractional per-agent timeout to protocol integer", async () => {
-  const bus = createEventBus();
+  const bus = reviewedBus();
   let timeoutMs: unknown;
   bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
     timeoutMs = raw.timeoutMs;
@@ -133,7 +141,7 @@ test("pi-subagents backend normalizes fractional per-agent timeout to protocol i
 });
 
 test("runWorkflow normalizes a fractional run-level timeout before bridge emission", async () => {
-  const bus = createEventBus();
+  const bus = reviewedBus();
   let timeoutMs: unknown;
   bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
     timeoutMs = raw.timeoutMs;
@@ -148,7 +156,7 @@ return await agent('task', { backend: 'pi-subagents' })`,
 });
 
 test("pi-subagents backend rejects unknown terminal statuses nonrecoverably", async () => {
-  const bus = createEventBus();
+  const bus = reviewedBus();
   bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
     bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(raw.requestId, { status: "future_status" }));
   });
@@ -160,7 +168,7 @@ test("pi-subagents backend rejects unknown terminal statuses nonrecoverably", as
 });
 
 test("pi-subagents backend correlates concurrent responses strictly by requestId", async () => {
-  const bus = createEventBus();
+  const bus = reviewedBus();
   const requests: any[] = [];
   bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw) => requests.push(raw));
   const backend = new PiSubagentsBackend(bus);
@@ -223,7 +231,7 @@ test("pi-subagents backend fails closed when unavailable, unaccepted, invalid, o
     ["structured_output_failed", /structured_output_failed/i],
     ["failed", /provider rate limit reached/i],
   ] as const) {
-    const bus = createEventBus();
+    const bus = reviewedBus();
     bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) =>
       bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, {
         version: 1,
@@ -242,7 +250,7 @@ test("pi-subagents backend fails closed when unavailable, unaccepted, invalid, o
 
 test("pi-subagents backend rejects completed responses with empty or malformed output", async () => {
   for (const output of [undefined, "", "   "]) {
-    const bus = createEventBus();
+    const bus = reviewedBus();
     bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
       bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(raw.requestId, { output }));
     });
@@ -253,7 +261,7 @@ test("pi-subagents backend rejects completed responses with empty or malformed o
     });
   }
 
-  const bus = createEventBus();
+  const bus = reviewedBus();
   bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
     bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(raw.requestId, { output: { text: "not wire text" } }));
   });
@@ -267,7 +275,7 @@ test("pi-subagents backend rejects completed responses with empty or malformed o
 });
 
 test("pi-subagents backend recognizes the 0.37 structured-output terminal status", async () => {
-  const bus = createEventBus();
+  const bus = reviewedBus();
   bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
     bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(raw.requestId, { status: "structured_output_failed" }));
   });
@@ -281,7 +289,7 @@ test("pi-subagents backend recognizes the 0.37 structured-output terminal status
 });
 
 test("pi-subagents backend rejects schema and unsupported workflow tools before request emission", async () => {
-  const bus = createEventBus();
+  const bus = reviewedBus();
   let emitted = 0;
   bus.on(PI_SUBAGENTS_REQUEST_EVENT, () => emitted++);
   const backend = new PiSubagentsBackend(bus);
@@ -293,17 +301,17 @@ test("pi-subagents backend rejects schema and unsupported workflow tools before 
 test("pi-subagents backend rejects missing event bus without emitting", async () => {
   await assert.rejects(
     new PiSubagentsBackend(undefined).run("task", { cwd: "/repo" }),
-    /not available.*same Pi process/i,
+    /unavailable.*same Pi process/i,
   );
 });
 
 test("pi-subagents backend fails closed when no bridge acknowledges the request", async () => {
-  const bus = createEventBus();
+  const bus = reviewedBus();
   await assert.rejects(new PiSubagentsBackend(bus, 5).run("task", { cwd: "/repo" }), /did not acknowledge/i);
 });
 
 test("pi-subagents updates never acknowledge the bridge", async () => {
-  const bus = createEventBus();
+  const bus = reviewedBus();
   bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
     bus.emit(PI_SUBAGENTS_UPDATE_EVENT, { version: 1, requestId: raw.requestId, recentOutput: "" });
   });
@@ -323,14 +331,14 @@ test("pi-subagents rejects non-plain, accessor-bearing, and unknown-field protoc
       }),
     (requestId: string) => response(requestId, { surprise: true }),
   ]) {
-    const bus = createEventBus();
+    const bus = reviewedBus();
     bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, makeEvent(raw.requestId)));
     await assert.rejects(new PiSubagentsBackend(bus, 50).run("task", { cwd: "/repo" }), /malformed protocol response/i);
   }
 });
 
 test("pi-subagents caps oversized final output and diagnostics before callbacks", async () => {
-  const bus = createEventBus();
+  const bus = reviewedBus();
   let diagnostics: any;
   bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
     bus.emit(
@@ -346,7 +354,7 @@ test("pi-subagents caps oversized final output and diagnostics before callbacks"
   );
   assert.equal(diagnostics, undefined);
 
-  const warningBus = createEventBus();
+  const warningBus = reviewedBus();
   warningBus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
     warningBus.emit(
       PI_SUBAGENTS_RESPONSE_EVENT,
@@ -360,7 +368,7 @@ test("pi-subagents caps oversized final output and diagnostics before callbacks"
 });
 
 test("a malformed response for one concurrent request cannot poison another", async () => {
-  const bus = createEventBus();
+  const bus = reviewedBus();
   const requests: any[] = [];
   bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw) => requests.push(raw));
   const backend = new PiSubagentsBackend(bus);
@@ -373,7 +381,7 @@ test("a malformed response for one concurrent request cannot poison another", as
 });
 
 test("pi-subagents retains a bounded coalesced progress tail", async () => {
-  const bus = createEventBus();
+  const bus = reviewedBus();
   const histories: any[][] = [];
   bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
     bus.emit(PI_SUBAGENTS_STARTED_EVENT, { version: 1, requestId: raw.requestId });
@@ -393,7 +401,7 @@ test("pi-subagents retains a bounded coalesced progress tail", async () => {
 });
 
 test("pi-subagents rejects excessive progress before joining lines", async () => {
-  const bus = createEventBus();
+  const bus = reviewedBus();
   bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
     bus.emit(PI_SUBAGENTS_STARTED_EVENT, { version: 1, requestId: raw.requestId });
     bus.emit(PI_SUBAGENTS_UPDATE_EVENT, {
@@ -419,6 +427,7 @@ test("pi-subagents cancel is best-effort and abort settles exactly once", async 
       inner.emit(channel, data);
     },
   };
+  registerSubagentDelegationProvider(bus, DEFAULT_SUBAGENT_DELEGATION_PROVIDER);
   const pending = new PiSubagentsBackend(bus).run("task", { cwd: "/repo", signal: controller.signal });
   controller.abort();
   controller.abort();
@@ -447,6 +456,7 @@ test("pi-subagents backend cleans listeners when request dispatch throws", async
       bus.emit(channel, data);
     },
   };
+  registerSubagentDelegationProvider(broken, DEFAULT_SUBAGENT_DELEGATION_PROVIDER);
   await assert.rejects(
     new PiSubagentsBackend(broken).run("task", { cwd: "/repo" }),
     /dispatch failed.*subscriber exploded/i,
@@ -454,8 +464,63 @@ test("pi-subagents backend cleans listeners when request dispatch throws", async
   assert.equal(count(), 0);
 });
 
-test("WorkflowAgent delegates an explicit role without overriding its configured model", async () => {
+test("provider negotiation caches by generation and observes reload/version drift", () => {
   const bus = createEventBus();
+  const first = registerSubagentDelegationProvider(bus, DEFAULT_SUBAGENT_DELEGATION_PROVIDER);
+  const backend = new PiSubagentsBackend(bus);
+  assert.equal(backend.negotiate().generation, first.descriptor.generation);
+  assert.equal(backend.negotiate(), first.descriptor);
+
+  const replacement = registerSubagentDelegationProvider(bus, DEFAULT_SUBAGENT_DELEGATION_PROVIDER);
+  first.dispose();
+  assert.equal(backend.negotiate().generation, replacement.descriptor.generation);
+
+  registerSubagentDelegationProvider(bus, {
+    ...DEFAULT_SUBAGENT_DELEGATION_PROVIDER,
+    packageVersion: "0.37.1-drift",
+  });
+  assert.throws(() => backend.negotiate(), /package version drifted.*0\.37\.1-drift/i);
+});
+
+test("cached provider generation still negotiates request-specific fields", () => {
+  const bus = createEventBus();
+  registerSubagentDelegationProvider(bus, {
+    ...DEFAULT_SUBAGENT_DELEGATION_PROVIDER,
+    protocols: DEFAULT_SUBAGENT_DELEGATION_PROVIDER.protocols.map((protocol) =>
+      protocol.version === 1 ? { ...protocol, requestFields: { ...protocol.requestFields, model: false } } : protocol,
+    ),
+  });
+  const backend = new PiSubagentsBackend(bus);
+  backend.negotiate();
+  assert.throws(() => backend.negotiate({ model: "vendor/model" }), /does not support requested model routing/i);
+});
+
+test("workflow negotiates delegated providers before starting or running an agent", async () => {
+  let runs = 0;
+  let starts = 0;
+  const agent = {
+    preflight() {
+      throw new Error("provider discovery rejected");
+    },
+    async run() {
+      runs++;
+      return "unexpected";
+    },
+  };
+  await assert.rejects(
+    runWorkflow(
+      `export const meta = { name: 'provider_preflight', description: 'provider preflight' }
+return await agent('task', { backend: 'pi-subagents' })`,
+      { cwd: "/repo", agent, persistLogs: false, onAgentStart: () => starts++ },
+    ),
+    /provider discovery rejected/i,
+  );
+  assert.equal(starts, 0);
+  assert.equal(runs, 0);
+});
+
+test("WorkflowAgent delegates an explicit role without overriding its configured model", async () => {
+  const bus = reviewedBus();
   let request: any;
   bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
     request = raw;

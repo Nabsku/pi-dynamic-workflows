@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createEventBus } from "@earendil-works/pi-coding-agent";
 import {
-  PI_SUBAGENTS_COMPATIBILITY_RANGE,
   PI_SUBAGENTS_PROTOCOL_VERSION,
   PI_SUBAGENTS_REQUEST_EVENT,
   PI_SUBAGENTS_RESPONSE_EVENT,
+  PI_SUBAGENTS_REVIEWED_COMMIT,
   PiSubagentsBackend,
 } from "../src/pi-subagents-backend.js";
 
@@ -38,7 +38,7 @@ type DelegationModule = {
 
 const releases = [
   { packageName: "pi-subagents-v0351", version: "0.35.1" },
-  { packageName: "pi-subagents", version: "0.37.0" },
+  { packageName: "pi-subagents-v0370", version: "0.37.0" },
 ] as const;
 
 async function loadRelease(packageName: string): Promise<{ bridge: BridgeModule; delegation: DelegationModule }> {
@@ -60,33 +60,27 @@ function completed(output: string, model?: string) {
 }
 
 for (const release of releases) {
-  test(`pi-subagents ${release.version} public v1 bridge accepts omitted and explicit models`, async () => {
+  test(`stock pi-subagents ${release.version} fails closed without provider discovery`, async () => {
     const { bridge, delegation } = await loadRelease(release.packageName);
     assert.equal(delegation.SUBAGENT_DELEGATION_PROTOCOL_VERSION, PI_SUBAGENTS_PROTOCOL_VERSION);
     assert.equal(delegation.SUBAGENT_DELEGATION_REQUEST_EVENT, PI_SUBAGENTS_REQUEST_EVENT);
     assert.equal(delegation.SUBAGENT_DELEGATION_RESPONSE_EVENT, PI_SUBAGENTS_RESPONSE_EVENT);
 
     const bus = createEventBus();
-    const params: Record<string, unknown>[] = [];
     const registration = bridge.registerPromptTemplateDelegationBridge({
       events: bus,
       getContext: () => ({ cwd: "/repo" }),
-      execute: async (_requestId, value) => {
-        params.push(value);
-        return completed(`done:${String(value.model ?? "default")}`, value.model as string | undefined);
-      },
-      executeVersioned: async (_requestId, value) => {
-        params.push(value);
-        return completed(`done:${String(value.model ?? "default")}`, value.model as string | undefined);
-      },
+      execute: async () => completed("unexpected"),
+      executeVersioned: async () => completed("unexpected"),
     });
 
     try {
       const backend = new PiSubagentsBackend(bus);
-      assert.equal(await backend.run("omitted", { cwd: "/repo" }), "done:default");
-      assert.equal(await backend.run("explicit", { cwd: "/repo", model: "vendor/model" }), "done:vendor/model");
-      assert.equal(params[0]?.model, undefined);
-      assert.equal(params[1]?.model, "vendor/model");
+      await assert.rejects(backend.run("task", { cwd: "/repo" }), (error: unknown) => {
+        assert.match(String(error), /provider discovery is unavailable.*do not expose/i);
+        assert.match(String(error), new RegExp(release.version.replaceAll(".", "\\.")));
+        return true;
+      });
     } finally {
       registration.dispose();
     }
@@ -126,6 +120,23 @@ for (const release of releases) {
   });
 }
 
-test("documented pi-subagents compatibility range is bounded by the conformance fixtures", () => {
-  assert.equal(PI_SUBAGENTS_COMPATIBILITY_RANGE, ">=0.35.1 <0.38.0");
+test("exact reviewed fork bridge discovers and serves delegation v1", async () => {
+  const { bridge } = await loadRelease("pi-subagents");
+  const bus = createEventBus();
+  const registration = bridge.registerPromptTemplateDelegationBridge({
+    events: bus,
+    getContext: () => ({ cwd: "/repo" }),
+    execute: async (_requestId, value) => completed(`done:${String(value.model ?? "default")}`),
+    executeVersioned: async (_requestId, value) => completed(`done:${String(value.model ?? "default")}`),
+  });
+  try {
+    const backend = new PiSubagentsBackend(bus);
+    assert.equal(await backend.run("task", { cwd: "/repo", model: "vendor/model" }), "done:vendor/model");
+  } finally {
+    registration.dispose();
+  }
+});
+
+test("backend pins the exact reviewed provider-discovery fork commit", () => {
+  assert.equal(PI_SUBAGENTS_REVIEWED_COMMIT, "b77781ea926203b32af8fad439432e5cef2aae5f");
 });

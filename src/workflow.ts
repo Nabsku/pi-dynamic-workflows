@@ -152,6 +152,7 @@ export type WorkflowRuntimeEvent =
 /** Minimal injected agent surface used by the workflow runtime and deterministic tests. */
 export interface WorkflowAgentRunner {
   run(prompt: string, options?: AgentRunOptions<TSchema>): Promise<unknown>;
+  preflight?(options: AgentRunOptions<TSchema>): void;
 }
 
 export interface WorkflowRunOptions extends WorkflowAgentOptions {
@@ -609,6 +610,17 @@ export async function runWorkflow<T = unknown>(
     // spec, else the session's main model. The real resolved id overrides this via
     // onModelResolved once the subagent session is created.
     let displayModel = modelSpec ?? options.mainModel;
+
+    // Fail unavailable or drifted delegated providers before reserving capacity.
+    // This synchronous discovery is not request acknowledgement.
+    agentRunner.preflight?.({
+      schema: agentOptions.schema,
+      model: modelSpec,
+      tier: agentOptions.tier,
+      backend: agentOptions.backend,
+      agentType: agentOptions.agentType,
+      timeoutMs: agentOptions.timeoutMs !== undefined ? agentOptions.timeoutMs : agentTimeoutMs,
+    });
 
     // Deterministic resume key: assigned at lexical call time, before the limiter,
     // so parallel()/pipeline() fan-out is reproducible for a fixed script.

@@ -88,13 +88,7 @@
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=0.80.8",
     "@earendil-works/pi-tui": ">=0.80.6",
-    "pi-subagents": ">=0.35.1 <0.38.0",
     "typebox": "*"
-  },
-  "peerDependenciesMeta": {
-    "pi-subagents": {
-      "optional": true
-    }
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
@@ -102,8 +96,9 @@
     "@earendil-works/pi-coding-agent": "latest",
     "@earendil-works/pi-tui": "latest",
     "fast-check": "^4.8.0",
-    "pi-subagents": "0.37.0",
+    "pi-subagents": "github:Nabsku/pi-subagents#b77781ea926203b32af8fad439432e5cef2aae5f",
     "pi-subagents-v0351": "npm:pi-subagents@0.35.1",
+    "pi-subagents-v0370": "https://registry.npmjs.org/pi-subagents/-/pi-subagents-0.37.0.tgz",
     "tsx": "latest",
     "typebox": "latest",
     "typescript": "latest"

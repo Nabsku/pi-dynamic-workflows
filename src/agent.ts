@@ -526,6 +526,7 @@ export class WorkflowAgent {
   /** Shared registry from the host session, when provided. */
   private readonly sharedRegistry?: ModelRegistry;
   private readonly piSubagentsEvents?: EventBus;
+  private readonly piSubagentsBackend: PiSubagentsBackend;
   private readonly hasCustomToolset: boolean;
   /** Lazily built once; shares the SDK's agentDir/auth so resolved models are authed. */
   private registry?: ModelRegistry;
@@ -551,7 +552,13 @@ export class WorkflowAgent {
     this.mainModel = options.mainModel;
     this.sharedRegistry = options.modelRegistry;
     this.piSubagentsEvents = options.piSubagentsEvents;
+    this.piSubagentsBackend = new PiSubagentsBackend(this.piSubagentsEvents);
     this.hasCustomToolset = options.tools !== undefined;
+  }
+
+  preflight(options: AgentRunOptions<TSchema>): void {
+    if (options.backend !== "pi-subagents") return;
+    this.piSubagentsBackend.negotiate({ model: options.model, timeoutMs: options.timeoutMs });
   }
 
   /**
@@ -767,7 +774,7 @@ export class WorkflowAgent {
       // fallback, which would silently override the authoritative role config.
       const forwardedModel =
         (options.model || options.tier) && resolvedModel ? canonicalModelSpec(resolvedModel) : undefined;
-      return (await new PiSubagentsBackend(this.piSubagentsEvents).run(this.buildPrompt(prompt, options, false), {
+      return (await this.piSubagentsBackend.run(this.buildPrompt(prompt, options, false), {
         cwd: runCwd,
         agentType: options.agentType,
         model: forwardedModel,
