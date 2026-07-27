@@ -181,6 +181,10 @@ const AGENT_OPTIONS: OptionShape = {
     option("tier", "string", true, null, ["configured route name"], "model-routes"),
     option("isolation", '"worktree"', true),
     option("agentType", "string", true, null, ["must come from provided context"], "agent-types"),
+    option("backend", '"native" | "pi-subagents"', true, '"native"', [
+      "pi-subagents is opt-in and requires its public v1 bridge in the same Pi process",
+      "pi-subagents is foreground-only and does not support schema, workflow shared-store child tools, or workflow custom toolsets",
+    ]),
     option("timeoutMs", "number | null", true, "run timeout; null disables"),
     option("retries", "number", true, "run retry count", ["finite values are floored and clamped to 0..3"]),
   ],

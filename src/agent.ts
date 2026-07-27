@@ -7,6 +7,7 @@ import {
   createAgentSession,
   createCodingTools,
   DefaultResourceLoader,
+  type EventBus,
   getAgentDir,
   ModelRegistry,
   ModelRuntime,
@@ -27,6 +28,7 @@ import {
   type RankableModel,
   resolveTierModel,
 } from "./model-tier-config.js";
+import { PiSubagentsBackend, type PiSubagentsDiagnosticDetails } from "./pi-subagents-backend.js";
 import { createStructuredOutputTool, type StructuredOutputCapture } from "./structured-output.js";
 
 /**
@@ -239,6 +241,8 @@ export interface WorkflowAgentOptions {
    * Default: false (current behavior).
    */
   persistAgentSessions?: boolean;
+  /** Same-process event bus used only by explicit backend: "pi-subagents" calls. */
+  piSubagentsEvents?: EventBus;
 }
 
 // pi >= 0.80.8: ModelRegistry is a sync facade over an async-created ModelRuntime
@@ -470,6 +474,14 @@ export interface AgentRunOptions<TSchemaDef extends TSchema | undefined = undefi
    * omitted.
    */
   modelRegistry?: ModelRegistry;
+  /** Execution backend. Native remains the default. */
+  backend?: "native" | "pi-subagents";
+  /** Exact pi-subagents role when that backend is selected; defaults to delegate. */
+  agentType?: string;
+  /** Forwarded to the pi-subagents request as well as enforced by the workflow runner. */
+  timeoutMs?: number | null;
+  /** Diagnostic paths/ids returned by pi-subagents v1. */
+  onDiagnostics?: (details: PiSubagentsDiagnosticDetails) => void;
 }
 
 export type AgentRunResult<TSchemaDef extends TSchema | undefined> = TSchemaDef extends TSchema
@@ -509,6 +521,8 @@ export class WorkflowAgent {
   private readonly mainModel?: string;
   /** Shared registry from the host session, when provided. */
   private readonly sharedRegistry?: ModelRegistry;
+  private readonly piSubagentsEvents?: EventBus;
+  private readonly hasCustomToolset: boolean;
   /** Lazily built once; shares the SDK's agentDir/auth so resolved models are authed. */
   private registry?: ModelRegistry;
   /**
@@ -532,6 +546,8 @@ export class WorkflowAgent {
     this.instructions = options.instructions;
     this.mainModel = options.mainModel;
     this.sharedRegistry = options.modelRegistry;
+    this.piSubagentsEvents = options.piSubagentsEvents;
+    this.hasCustomToolset = options.tools !== undefined;
   }
 
   /**
@@ -739,6 +755,27 @@ export class WorkflowAgent {
         console.warn(`[workflow] model "${modelSpec}" not found; using session default`);
         options.onModelFallback?.(modelSpec);
       }
+    }
+
+    if (options.backend === "pi-subagents") {
+      // An unqualified delegated role keeps pi-subagents' configured model.
+      // Forward only an explicit/tier/phase route, never this runner's session
+      // fallback, which would silently override the authoritative role config.
+      const forwardedModel =
+        (options.model || options.tier) && resolvedModel ? canonicalModelSpec(resolvedModel) : undefined;
+      return (await new PiSubagentsBackend(this.piSubagentsEvents).run(this.buildPrompt(prompt, options, false), {
+        cwd: runCwd,
+        agentType: options.agentType,
+        model: forwardedModel,
+        timeoutMs: options.timeoutMs,
+        signal: options.signal,
+        schema: options.schema,
+        hasWorkflowTools: this.hasCustomToolset || Boolean(options.tools?.length || options.systemTools?.length),
+        onModelResolved: options.onModelResolved,
+        onUsage: options.onUsage,
+        onHistory: options.onHistory,
+        onDiagnostics: options.onDiagnostics,
+      })) as AgentRunResult<TSchemaDef>;
     }
 
     const agentDir = getAgentDir();

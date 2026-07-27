@@ -164,6 +164,29 @@ return a`,
   assert.equal(calls, 1);
 });
 
+test("runWorkflow rejects an unknown backend before invoking any runner", async () => {
+  let calls = 0;
+  const script = `export const meta = { name: 'bad_backend', description: 'reject typo' }
+await agent('x', { backend: 'pi-subagent' })
+return 1`;
+  await assert.rejects(
+    runWorkflow(script, {
+      agent: {
+        async run() {
+          calls++;
+          return "unexpected";
+        },
+      },
+      persistLogs: false,
+    }),
+    (error: unknown) =>
+      error instanceof WorkflowError &&
+      error.code === WorkflowErrorCode.SCRIPT_VALIDATION_ERROR &&
+      /unsupported agent backend/.test(error.message),
+  );
+  assert.equal(calls, 0);
+});
+
 test("per-agent retries override run-level retries", async () => {
   let calls = 0;
   const result = await runWorkflow(

@@ -66,6 +66,16 @@ export {
   saveModelTierConfig,
   sortedTierNames,
 } from "./model-tier-config.js";
+export type { PiSubagentsDiagnosticDetails, PiSubagentsRunOptions } from "./pi-subagents-backend.js";
+export {
+  PI_SUBAGENTS_CANCEL_EVENT,
+  PI_SUBAGENTS_PROTOCOL_VERSION,
+  PI_SUBAGENTS_REQUEST_EVENT,
+  PI_SUBAGENTS_RESPONSE_EVENT,
+  PI_SUBAGENTS_STARTED_EVENT,
+  PI_SUBAGENTS_UPDATE_EVENT,
+  PiSubagentsBackend,
+} from "./pi-subagents-backend.js";
 export type { PersistedRunState, RunPersistence, RunStatus } from "./run-persistence.js";
 export { createRunPersistence, generateRunId } from "./run-persistence.js";
 export {

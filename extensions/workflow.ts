@@ -52,6 +52,9 @@ export default function extension(pi: ExtensionAPI) {
     concurrency: settings.defaultConcurrency,
     defaultAgentRetries: settings.defaultAgentRetries,
     persistAgentSessions: settings.persistAgentSessions,
+    // Store only the process-shared bus. Reload refreshes this reference; no
+    // delegated listener closes over an invalidated ExtensionAPI generation.
+    piSubagentsEvents: pi.events,
   };
   const runtimeClaim = claimWorkflowRuntime(cwd);
   const previousRuntime = runtimeClaim.compatible;

@@ -20,6 +20,7 @@ Every exact fact below is projected from the installed extension's capability co
 - `tier`: string (optional; configured route name; dynamic reference: model-routes)
 - `isolation`: "worktree" (optional)
 - `agentType`: string (optional; must come from provided context; dynamic reference: agent-types)
+- `backend`: "native" | "pi-subagents" (optional; default: "native"; pi-subagents is opt-in and requires its public v1 bridge in the same Pi process; pi-subagents is foreground-only and does not support schema, workflow shared-store child tools, or workflow custom toolsets)
 - `timeoutMs`: number | null (optional; default: run timeout; null disables)
 - `retries`: number (optional; default: run retry count; finite values are floored and clamped to 0..3)
 - Constraint: recoverable failures return null after retries; nonrecoverable failures throw

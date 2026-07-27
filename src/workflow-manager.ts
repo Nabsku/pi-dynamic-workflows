@@ -3,7 +3,7 @@
  */
 
 import { EventEmitter } from "node:events";
-import type { ModelRegistry, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { EventBus, ModelRegistry, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { WorkflowAgent } from "./agent.js";
 import { preview, type WorkflowAgentSnapshot, type WorkflowSnapshot } from "./display.js";
 import { isProviderUsageLimit, WorkflowError, WorkflowErrorCode } from "./errors.js";
@@ -213,6 +213,8 @@ export interface WorkflowManagerOptions {
    * standard sessions directory. Default false (in-memory, discarded).
    */
   persistAgentSessions?: boolean;
+  /** Same-process extension event bus for explicit pi-subagents agent calls. */
+  piSubagentsEvents?: EventBus;
   /**
    * How many terminal (completed/failed/aborted) runs to retain full
    * in-memory state for before the oldest is evicted from `runs` (see the
@@ -236,6 +238,7 @@ export type WorkflowManagerReloadOptions = Pick<
   | "toolsets"
   | "excludeSubagentTools"
   | "persistAgentSessions"
+  | "piSubagentsEvents"
 >;
 
 /**
@@ -330,6 +333,7 @@ export class WorkflowManager extends EventEmitter {
   private toolsets?: Record<string, () => ToolDefinition[]>;
   private excludeSubagentTools?: string[];
   private persistAgentSessions: boolean;
+  private piSubagentsEvents?: EventBus;
 
   constructor(options: WorkflowManagerOptions = {}) {
     super();
@@ -346,6 +350,7 @@ export class WorkflowManager extends EventEmitter {
     this.toolsets = options.toolsets;
     this.excludeSubagentTools = options.excludeSubagentTools;
     this.persistAgentSessions = options.persistAgentSessions ?? false;
+    this.piSubagentsEvents = options.piSubagentsEvents;
     this.maxTerminalRunsInMemory = options.maxTerminalRunsInMemory ?? DEFAULT_MAX_TERMINAL_RUNS_IN_MEMORY;
     this.persistence = createRunPersistence(this.cwd);
     this.recoverStaleRuns();
@@ -396,6 +401,8 @@ export class WorkflowManager extends EventEmitter {
     this.toolsets = options.toolsets;
     this.excludeSubagentTools = options.excludeSubagentTools;
     this.persistAgentSessions = options.persistAgentSessions ?? false;
+    // The bridge stores only the process-shared bus, never an ExtensionAPI generation.
+    this.piSubagentsEvents = options.piSubagentsEvents;
   }
 
   /** Set the session's main model (provider/id). Used to auto-tier explore agents. */
@@ -649,6 +656,7 @@ export class WorkflowManager extends EventEmitter {
         mainModel: this.mainModel,
         modelRegistry: this.modelRegistry,
         persistAgentSessions: this.persistAgentSessions,
+        piSubagentsEvents: this.piSubagentsEvents,
         signal: managed.controller.signal,
         concurrency: resolvedConcurrency,
         agentRetries: resolvedAgentRetries,

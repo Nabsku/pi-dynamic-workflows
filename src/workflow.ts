@@ -322,6 +322,8 @@ export interface AgentOptions<TSchemaDef extends TSchema | undefined = TSchema |
    * and falls back to default tools/model (with the name as a prose hint).
    */
   agentType?: string;
+  /** Opt-in execution backend. Native is the default. */
+  backend?: "native" | "pi-subagents";
   /** Override timeout for this specific agent. null means no hard timeout. */
   timeoutMs?: number | null;
   /** Retry attempts after a recoverable failure for this specific agent. */
@@ -549,6 +551,17 @@ export async function runWorkflow<T = unknown>(
 
   const agentImpl = async (prompt: string, agentOptions: AgentOptions = {}) => {
     throwIfAborted();
+    if (
+      agentOptions.backend !== undefined &&
+      agentOptions.backend !== "native" &&
+      agentOptions.backend !== "pi-subagents"
+    ) {
+      throw new WorkflowError(
+        `unsupported agent backend ${JSON.stringify(agentOptions.backend)}; expected "native" or "pi-subagents"`,
+        WorkflowErrorCode.SCRIPT_VALIDATION_ERROR,
+        { recoverable: false },
+      );
+    }
 
     // Capture the enclosing parallel()/pipeline() fan-out's cancellation batch
     // (if any) synchronously, while the ALS context of the caller is still
@@ -598,8 +611,11 @@ export async function runWorkflow<T = unknown>(
     const requestedLabel = agentOptions.label?.trim();
 
     // Resolve a named agentType to its bound definition (tools/model/prompt).
-    const agentDef = resolveAgentType(agentOptions.agentType, agentRegistry);
-    if (agentOptions.agentType && !agentDef) {
+    // pi-subagents owns its own role registry. Do not also resolve that role
+    // through this extension's .pi/agents registry or merge two authorities.
+    const agentDef =
+      agentOptions.backend === "pi-subagents" ? undefined : resolveAgentType(agentOptions.agentType, agentRegistry);
+    if (agentOptions.backend !== "pi-subagents" && agentOptions.agentType && !agentDef) {
       log(`unknown agentType "${agentOptions.agentType}"; using default tools/model`);
     }
 
@@ -761,8 +777,12 @@ export async function runWorkflow<T = unknown>(
               // run-unique deltaKey so the delta can be journaled and replayed
               // correctly on resume, even when a nested workflow() run shares
               // this store concurrently with the parent run.
-              systemTools: createAgentStoreTools(store, deltaKey),
+              // Protocol v1 cannot carry workflow-owned shared-store tools.
+              systemTools: agentOptions.backend === "pi-subagents" ? undefined : createAgentStoreTools(store, deltaKey),
               cwd: runCwd,
+              backend: agentOptions.backend,
+              agentType: agentOptions.agentType,
+              timeoutMs: timeout,
               onModelResolved: (id: string) => {
                 displayModel = id;
               },
@@ -1526,6 +1546,7 @@ function hashAgentCall(
     tier: options.tier ?? null,
     phase: phase ?? null,
     agentType: options.agentType ?? null,
+    backend: options.backend ?? "native",
     // Resolved definition (tools/model/prompt) so editing an agent .md invalidates
     // this call's cached result on a later resume.
     agentDef: agentDefKey,
