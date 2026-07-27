@@ -203,11 +203,15 @@ test("pi-subagents backend timeout cancels and cleans listeners", async () => {
 
 test("pi-subagents backend fails closed when unavailable, unaccepted, invalid, or non-completed", async () => {
   for (const [status, pattern] of [
+    ["timed_out", /timed out/i],
+    ["cancelled", /cancelled/i],
+    ["interrupted", /interrupted/i],
     ["unavailable_context", /active extension context/i],
     ["invalid_request", /invalid request/i],
     ["acceptance_failed", /acceptance/i],
     ["turn_budget_exhausted", /turn_budget_exhausted/i],
     ["tool_budget_exhausted", /tool_budget_exhausted/i],
+    ["structured_output_failed", /structured_output_failed/i],
     ["failed", /provider rate limit reached/i],
   ] as const) {
     const bus = createEventBus();
@@ -225,6 +229,34 @@ test("pi-subagents backend fails closed when unavailable, unaccepted, invalid, o
       return true;
     });
   }
+});
+
+test("pi-subagents backend rejects completed responses with empty or malformed output", async () => {
+  for (const output of [undefined, "", "   ", { text: "not wire text" }]) {
+    const bus = createEventBus();
+    bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
+      bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(raw.requestId, { output }));
+    });
+    await assert.rejects(new PiSubagentsBackend(bus).run("task", { cwd: "/repo" }), (error: unknown) => {
+      assert.ok(error instanceof WorkflowError);
+      assert.equal(error.code, "AGENT_EMPTY_OUTPUT");
+      return true;
+    });
+  }
+});
+
+test("pi-subagents backend recognizes the 0.37 structured-output terminal status", async () => {
+  const bus = createEventBus();
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
+    bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(raw.requestId, { status: "structured_output_failed" }));
+  });
+  await assert.rejects(new PiSubagentsBackend(bus).run("task", { cwd: "/repo" }), (error: unknown) => {
+    assert.ok(error instanceof WorkflowError);
+    assert.equal(error.code, "AGENT_EXECUTION_ERROR");
+    assert.equal(error.recoverable, true);
+    assert.doesNotMatch(error.message, /unsupported protocol status/i);
+    return true;
+  });
 });
 
 test("pi-subagents backend rejects schema and unsupported workflow tools before request emission", async () => {

@@ -69,6 +69,7 @@ export {
 export type { PiSubagentsDiagnosticDetails, PiSubagentsRunOptions } from "./pi-subagents-backend.js";
 export {
   PI_SUBAGENTS_CANCEL_EVENT,
+  PI_SUBAGENTS_COMPATIBILITY_RANGE,
   PI_SUBAGENTS_PROTOCOL_VERSION,
   PI_SUBAGENTS_REQUEST_EVENT,
   PI_SUBAGENTS_RESPONSE_EVENT,

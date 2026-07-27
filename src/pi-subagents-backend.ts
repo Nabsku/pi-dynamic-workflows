@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { EventBus } from "@earendil-works/pi-coding-agent";
+import type { SubagentDelegationRequest, SubagentDelegationStatus } from "pi-subagents/delegation";
 import type { TSchema } from "typebox";
 import type { AgentUsage } from "./agent.js";
 import type { AgentHistoryEntry } from "./agent-history.js";
 import { classifyProviderLimit, WorkflowError, WorkflowErrorCode } from "./errors.js";
 
 export const PI_SUBAGENTS_PROTOCOL_VERSION = 1 as const;
+/** Releases exercised by the real-parser/bridge conformance fixtures. */
+export const PI_SUBAGENTS_COMPATIBILITY_RANGE = ">=0.35.1 <0.38.0" as const;
 export const PI_SUBAGENTS_REQUEST_EVENT = "prompt-template:subagent:request";
 export const PI_SUBAGENTS_STARTED_EVENT = "prompt-template:subagent:started";
 export const PI_SUBAGENTS_UPDATE_EVENT = "prompt-template:subagent:update";
@@ -36,17 +39,7 @@ export interface PiSubagentsRunOptions {
 }
 
 type WireEvent = { version?: unknown; requestId?: unknown; [key: string]: unknown };
-type TerminalStatus =
-  | "completed"
-  | "failed"
-  | "timed_out"
-  | "cancelled"
-  | "interrupted"
-  | "turn_budget_exhausted"
-  | "tool_budget_exhausted"
-  | "acceptance_failed"
-  | "invalid_request"
-  | "unavailable_context";
+type TerminalStatus = SubagentDelegationStatus;
 
 /** Narrow optional adapter over pi-subagents' public v1 foreground delegation protocol. */
 export class PiSubagentsBackend {
@@ -262,7 +255,7 @@ export class PiSubagentsBackend {
         timer.unref?.();
       }
       try {
-        events.emit(PI_SUBAGENTS_REQUEST_EVENT, {
+        const request = {
           version: PI_SUBAGENTS_PROTOCOL_VERSION,
           requestId,
           agent: options.agentType ?? "delegate",
@@ -271,7 +264,8 @@ export class PiSubagentsBackend {
           cwd: options.cwd,
           ...(options.model ? { model: options.model } : {}),
           ...(delegatedTimeoutMs !== undefined ? { timeoutMs: delegatedTimeoutMs } : {}),
-        });
+        } satisfies SubagentDelegationRequest;
+        events.emit(PI_SUBAGENTS_REQUEST_EVENT, request);
       } catch (error) {
         fail(
           `pi-subagents request dispatch failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -292,6 +286,7 @@ function isTerminalStatus(status: string): status is TerminalStatus {
     status === "interrupted" ||
     status === "turn_budget_exhausted" ||
     status === "tool_budget_exhausted" ||
+    status === "structured_output_failed" ||
     status === "acceptance_failed" ||
     status === "invalid_request" ||
     status === "unavailable_context"

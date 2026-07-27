@@ -84,6 +84,10 @@ return await agent(
 - **Quality patterns** — compose `verify()`, `judgePanel()`, `loopUntilDry()`, and `completenessCheck()` instead of rebuilding review loops.
 - **Reusable workflows** — save any run as a command and call saved workflows from other workflows.
 
+### Optional pi-subagents backend
+
+`backend: "pi-subagents"` uses pi-subagents' same-process public delegation v1 protocol. It remains opt-in and does not add a runtime dependency: install and enable `pi-subagents` separately when you use it. The supported range is `>=0.35.1 <0.38.0`, derived from conformance tests against the published 0.35.1 and 0.37.0 packages. The tests load each package's real request parser and bridge, not a consumer-side protocol replica.
+
 ## Supported workflow capabilities
 
 The installed extension generates this compact index from its executable capability contract. Read the [workflow authoring guide](docs/workflow-authoring.md) or use the packaged `workflow-authoring` skill for constraints, lifecycle guidance, and adaptable examples; configured route and agent-type values remain environment-specific.
