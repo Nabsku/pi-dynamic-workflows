@@ -194,11 +194,20 @@ test("pi-subagents backend abort emits correlated cancel and cleans listeners", 
 
 test("pi-subagents backend timeout cancels and cleans listeners", async () => {
   const { bus, count } = listenerCountingBus();
+  const controller = new AbortController();
   let cancel: any;
+  let request: any;
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
+    request = raw;
+    bus.emit(PI_SUBAGENTS_STARTED_EVENT, { version: 1, requestId: raw.requestId });
+  });
   bus.on(PI_SUBAGENTS_CANCEL_EVENT, (raw) => (cancel = raw));
-  await assert.rejects(new PiSubagentsBackend(bus).run("task", { cwd: "/repo", timeoutMs: 5 }), /timed out/i);
+  const pending = new PiSubagentsBackend(bus).run("task", { cwd: "/repo", timeoutMs: 5, signal: controller.signal });
+  controller.abort();
+  await assert.rejects(pending, /cancelled|aborted/i);
+  assert.equal(request.timeoutMs, 5, "workflow policy is forwarded while its AbortSignal owns local timeout");
   assert.equal(cancel.version, 1);
-  assert.equal(count(), 1);
+  assert.equal(count(), 2);
 });
 
 test("pi-subagents backend fails closed when unavailable, unaccepted, invalid, or non-completed", async () => {
@@ -232,7 +241,7 @@ test("pi-subagents backend fails closed when unavailable, unaccepted, invalid, o
 });
 
 test("pi-subagents backend rejects completed responses with empty or malformed output", async () => {
-  for (const output of [undefined, "", "   ", { text: "not wire text" }]) {
+  for (const output of [undefined, "", "   "]) {
     const bus = createEventBus();
     bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
       bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(raw.requestId, { output }));
@@ -243,6 +252,18 @@ test("pi-subagents backend rejects completed responses with empty or malformed o
       return true;
     });
   }
+
+  const bus = createEventBus();
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
+    bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(raw.requestId, { output: { text: "not wire text" } }));
+  });
+  await assert.rejects(new PiSubagentsBackend(bus).run("task", { cwd: "/repo" }), (error: unknown) => {
+    assert.ok(error instanceof WorkflowError);
+    assert.equal(error.code, "AGENT_EXECUTION_ERROR");
+    assert.equal(error.recoverable, false);
+    assert.match(error.message, /malformed protocol response/i);
+    return true;
+  });
 });
 
 test("pi-subagents backend recognizes the 0.37 structured-output terminal status", async () => {
@@ -279,6 +300,142 @@ test("pi-subagents backend rejects missing event bus without emitting", async ()
 test("pi-subagents backend fails closed when no bridge acknowledges the request", async () => {
   const bus = createEventBus();
   await assert.rejects(new PiSubagentsBackend(bus, 5).run("task", { cwd: "/repo" }), /did not acknowledge/i);
+});
+
+test("pi-subagents updates never acknowledge the bridge", async () => {
+  const bus = createEventBus();
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
+    bus.emit(PI_SUBAGENTS_UPDATE_EVENT, { version: 1, requestId: raw.requestId, recentOutput: "" });
+  });
+  await assert.rejects(new PiSubagentsBackend(bus, 5).run("task", { cwd: "/repo" }), /did not acknowledge/i);
+});
+
+test("pi-subagents rejects non-plain, accessor-bearing, and unknown-field protocol events", async () => {
+  for (const makeEvent of [
+    (requestId: string) => Object.assign(Object.create({}), response(requestId)),
+    (requestId: string) => Object.assign([], response(requestId)),
+    (requestId: string) =>
+      Object.defineProperty(response(requestId), "output", {
+        enumerable: true,
+        get() {
+          throw new Error("getter must not run");
+        },
+      }),
+    (requestId: string) => response(requestId, { surprise: true }),
+  ]) {
+    const bus = createEventBus();
+    bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, makeEvent(raw.requestId)));
+    await assert.rejects(new PiSubagentsBackend(bus, 50).run("task", { cwd: "/repo" }), /malformed protocol response/i);
+  }
+});
+
+test("pi-subagents caps oversized final output and diagnostics before callbacks", async () => {
+  const bus = createEventBus();
+  let diagnostics: any;
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
+    bus.emit(
+      PI_SUBAGENTS_RESPONSE_EVENT,
+      response(raw.requestId, {
+        output: "x".repeat(1_100_000),
+      }),
+    );
+  });
+  await assert.rejects(
+    new PiSubagentsBackend(bus).run("task", { cwd: "/repo", onDiagnostics: (value) => (diagnostics = value) }),
+    /final output exceeds/i,
+  );
+  assert.equal(diagnostics, undefined);
+
+  const warningBus = createEventBus();
+  warningBus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
+    warningBus.emit(
+      PI_SUBAGENTS_RESPONSE_EVENT,
+      response(raw.requestId, { warnings: Array.from({ length: 51 }, () => "warning") }),
+    );
+  });
+  await assert.rejects(
+    new PiSubagentsBackend(warningBus).run("task", { cwd: "/repo" }),
+    /malformed protocol response/i,
+  );
+});
+
+test("a malformed response for one concurrent request cannot poison another", async () => {
+  const bus = createEventBus();
+  const requests: any[] = [];
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw) => requests.push(raw));
+  const backend = new PiSubagentsBackend(bus);
+  const first = backend.run("first", { cwd: "/repo" });
+  const second = backend.run("second", { cwd: "/repo" });
+  bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(requests[0].requestId, { unknown: true }));
+  bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(requests[1].requestId, { output: "second" }));
+  await assert.rejects(first, /malformed protocol response/i);
+  assert.equal(await second, "second");
+});
+
+test("pi-subagents retains a bounded coalesced progress tail", async () => {
+  const bus = createEventBus();
+  const histories: any[][] = [];
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
+    bus.emit(PI_SUBAGENTS_STARTED_EVENT, { version: 1, requestId: raw.requestId });
+    for (let i = 0; i < 100; i++) {
+      bus.emit(PI_SUBAGENTS_UPDATE_EVENT, {
+        version: 1,
+        requestId: raw.requestId,
+        recentOutputLines: [`line-${i}`, `line-${i}`],
+      });
+    }
+    bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(raw.requestId));
+  });
+  await new PiSubagentsBackend(bus).run("task", { cwd: "/repo", onHistory: (value) => histories.push(value) });
+  const tail = histories.at(-1) ?? [];
+  assert.ok(tail.length <= 33, `expected bounded progress plus final output, got ${tail.length}`);
+  assert.equal(tail.filter((entry) => entry.text === "line-99\nline-99").length, 1);
+});
+
+test("pi-subagents rejects excessive progress before joining lines", async () => {
+  const bus = createEventBus();
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
+    bus.emit(PI_SUBAGENTS_STARTED_EVENT, { version: 1, requestId: raw.requestId });
+    bus.emit(PI_SUBAGENTS_UPDATE_EVENT, {
+      version: 1,
+      requestId: raw.requestId,
+      recentOutputLines: Array.from({ length: 10_000 }, () => "x"),
+    });
+  });
+  await assert.rejects(new PiSubagentsBackend(bus).run("task", { cwd: "/repo" }), /malformed protocol update/i);
+});
+
+test("pi-subagents cancel is best-effort and abort settles exactly once", async () => {
+  const inner = createEventBus();
+  const controller = new AbortController();
+  let cancels = 0;
+  const bus: EventBus = {
+    on: inner.on.bind(inner),
+    emit(channel, data) {
+      if (channel === PI_SUBAGENTS_CANCEL_EVENT) {
+        cancels++;
+        throw new Error("cancel subscriber exploded");
+      }
+      inner.emit(channel, data);
+    },
+  };
+  const pending = new PiSubagentsBackend(bus).run("task", { cwd: "/repo", signal: controller.signal });
+  controller.abort();
+  controller.abort();
+  await assert.rejects(pending, /cancelled|aborted/i);
+  assert.equal(cancels, 1);
+});
+
+test("pi-subagents timeout/abort response races settle once and release listeners", async () => {
+  const { bus, count } = listenerCountingBus();
+  const controller = new AbortController();
+  let requestId = "";
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => (requestId = raw.requestId));
+  const pending = new PiSubagentsBackend(bus).run("task", { cwd: "/repo", signal: controller.signal });
+  controller.abort();
+  bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(requestId, { output: "too late" }));
+  await assert.rejects(pending, /cancelled|aborted/i);
+  assert.equal(count(), 1);
 });
 
 test("pi-subagents backend cleans listeners when request dispatch throws", async () => {

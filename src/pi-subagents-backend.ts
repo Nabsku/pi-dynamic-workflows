@@ -38,8 +38,140 @@ export interface PiSubagentsRunOptions {
   onDiagnostics?: (details: PiSubagentsDiagnosticDetails) => void;
 }
 
-type WireEvent = { version?: unknown; requestId?: unknown; [key: string]: unknown };
 type TerminalStatus = SubagentDelegationStatus;
+
+const MAX_PROTOCOL_STRING_CHARS = 4_096;
+const MAX_PROGRESS_LINE_CHARS = 16_384;
+const MAX_PROGRESS_LINES = 200;
+const MAX_PROGRESS_CHARS = 262_144;
+const MAX_PROGRESS_HISTORY = 32;
+const MAX_WARNING_COUNT = 50;
+const MAX_FINAL_OUTPUT_CHARS = 1_000_000;
+
+const STARTED_FIELDS = new Set(["version", "requestId"]);
+const UPDATE_FIELDS = new Set([
+  ...STARTED_FIELDS,
+  "currentTool",
+  "currentToolArgs",
+  "recentOutput",
+  "recentOutputLines",
+  "recentTools",
+  "model",
+  "toolCount",
+  "durationMs",
+  "tokens",
+]);
+const RESPONSE_FIELDS = new Set([
+  ...STARTED_FIELDS,
+  "status",
+  "error",
+  "runId",
+  "childIndex",
+  "agent",
+  "model",
+  "exitCode",
+  "execution",
+  "output",
+  "outputPath",
+  "sessionFile",
+  "acceptance",
+  "review",
+  "effects",
+  "turns",
+  "toolCount",
+  "durationMs",
+  "tokens",
+  "warnings",
+]);
+
+type PlainRecord = Record<string, unknown>;
+
+function ownDataRecord(raw: unknown, allowed: ReadonlySet<string>): PlainRecord | undefined {
+  try {
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+    const prototype = Object.getPrototypeOf(raw);
+    if (prototype !== Object.prototype && prototype !== null) return undefined;
+    const descriptors = Object.getOwnPropertyDescriptors(raw);
+    const result: PlainRecord = Object.create(null);
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+      if (!allowed.has(key) || !("value" in descriptor) || descriptor.get || descriptor.set) return undefined;
+      result[key] = descriptor.value;
+    }
+    return result;
+  } catch {
+    return undefined;
+  }
+}
+
+function validBase(event: PlainRecord, requestId: string): boolean {
+  return event.version === PI_SUBAGENTS_PROTOCOL_VERSION && event.requestId === requestId;
+}
+
+function safelyTargets(raw: unknown, requestId: string): boolean {
+  try {
+    if (raw === null || typeof raw !== "object") return false;
+    const descriptors = Object.getOwnPropertyDescriptors(raw);
+    const version = descriptors.version;
+    const id = descriptors.requestId;
+    return (
+      Boolean(version && "value" in version && !version.get && !version.set) &&
+      version.value === PI_SUBAGENTS_PROTOCOL_VERSION &&
+      Boolean(id && "value" in id && !id.get && !id.set) &&
+      id.value === requestId
+    );
+  } catch {
+    return false;
+  }
+}
+
+function validOptionalString(value: unknown, max = MAX_PROTOCOL_STRING_CHARS): boolean {
+  return value === undefined || (typeof value === "string" && value.length <= max);
+}
+
+function validOptionalNumber(value: unknown): boolean {
+  return value === undefined || (typeof value === "number" && Number.isFinite(value) && value >= 0);
+}
+
+function ownArrayValues(raw: unknown, maxLength: number): unknown[] | undefined {
+  try {
+    if (!Array.isArray(raw)) return undefined;
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(raw, "length");
+    const length = lengthDescriptor && "value" in lengthDescriptor ? lengthDescriptor.value : undefined;
+    if (typeof length !== "number" || !Number.isSafeInteger(length) || length < 0 || length > maxLength) {
+      return undefined;
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(raw);
+    const values: unknown[] = [];
+    for (let index = 0; index < length; index++) {
+      const descriptor = descriptors[String(index)];
+      if (!descriptor || !("value" in descriptor) || descriptor.get || descriptor.set) return undefined;
+      values.push(descriptor.value);
+    }
+    if (Object.keys(descriptors).some((key) => key !== "length" && !/^(0|[1-9]\d*)$/.test(key))) return undefined;
+    return values;
+  } catch {
+    return undefined;
+  }
+}
+
+function validKnownJson(value: unknown, depth = 0): boolean {
+  if (value === undefined) return true;
+  if (value === null || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value === "string") return value.length <= MAX_PROGRESS_LINE_CHARS;
+  if (depth >= 4) return false;
+  if (Array.isArray(value)) {
+    const values = ownArrayValues(value, MAX_PROGRESS_LINES);
+    return values?.every((item) => validKnownJson(item, depth + 1)) ?? false;
+  }
+  try {
+    const record = ownDataRecord(value, new Set(Object.keys(value as object)));
+    if (!record || Object.keys(record).length > MAX_PROGRESS_LINES) return false;
+    return Object.values(record).every((item) => validKnownJson(item, depth + 1));
+  } catch {
+    return false;
+  }
+}
 
 /** Narrow optional adapter over pi-subagents' public v1 foreground delegation protocol. */
 export class PiSubagentsBackend {
@@ -97,11 +229,11 @@ export class PiSubagentsBackend {
         : undefined;
     return new Promise<string>((resolve, reject) => {
       let settled = false;
-      let timer: ReturnType<typeof setTimeout> | undefined;
       let handshakeTimer: ReturnType<typeof setTimeout> | undefined;
+      let cancelEmitted = false;
+      let progressChars = 0;
       const cleanups: Array<() => void> = [];
       const cleanup = () => {
-        if (timer) clearTimeout(timer);
         if (handshakeTimer) clearTimeout(handshakeTimer);
         for (const off of cleanups.splice(0)) off();
         options.signal?.removeEventListener("abort", onAbort);
@@ -112,8 +244,15 @@ export class PiSubagentsBackend {
         cleanup();
         fn();
       };
-      const emitCancel = () =>
-        events.emit(PI_SUBAGENTS_CANCEL_EVENT, { version: PI_SUBAGENTS_PROTOCOL_VERSION, requestId });
+      const emitCancel = () => {
+        if (cancelEmitted) return;
+        cancelEmitted = true;
+        try {
+          events.emit(PI_SUBAGENTS_CANCEL_EVENT, { version: PI_SUBAGENTS_PROTOCOL_VERSION, requestId });
+        } catch {
+          // Cancellation transport is best-effort. Local settlement must win.
+        }
+      };
       const fail = (message: string, code: WorkflowErrorCode, recoverable: boolean, details?: unknown) =>
         settle(() => reject(new WorkflowError(message, code, { recoverable, details })));
       const onAbort = () => {
@@ -124,46 +263,119 @@ export class PiSubagentsBackend {
           true,
         );
       };
-      const correlated = (raw: unknown): WireEvent | undefined => {
-        if (!raw || typeof raw !== "object") return undefined;
-        const event = raw as WireEvent;
-        return event.version === PI_SUBAGENTS_PROTOCOL_VERSION && event.requestId === requestId ? event : undefined;
-      };
       const acknowledgeBridge = () => {
         if (!handshakeTimer) return;
         clearTimeout(handshakeTimer);
         handshakeTimer = undefined;
       };
-      const appendHistory = (text: string) => {
+      const appendHistory = (text: string, progress = false) => {
         if (!text.trim() || history.at(-1)?.text === text) return;
+        if (progress) {
+          if (progressChars + text.length > MAX_PROGRESS_CHARS) return;
+          progressChars += text.length;
+          while (history.length >= MAX_PROGRESS_HISTORY) history.shift();
+        }
         history.push({ role: "assistant", kind: "text", text });
         options.onHistory?.([...history]);
       };
+      const malformed = (kind: string) =>
+        fail(`pi-subagents returned malformed protocol ${kind}`, WorkflowErrorCode.AGENT_EXECUTION_ERROR, false);
 
       cleanups.push(
         events.on(PI_SUBAGENTS_STARTED_EVENT, (raw) => {
-          if (!correlated(raw)) return;
+          const started = ownDataRecord(raw, STARTED_FIELDS);
+          if (!started) {
+            if (safelyTargets(raw, requestId)) malformed("started event");
+            return;
+          }
+          if (!validBase(started, requestId)) return;
           acknowledgeBridge();
         }),
         events.on(PI_SUBAGENTS_UPDATE_EVENT, (raw) => {
-          const update = correlated(raw);
-          if (!update) return;
-          acknowledgeBridge();
+          const update = ownDataRecord(raw, UPDATE_FIELDS);
+          if (!update) {
+            if (safelyTargets(raw, requestId)) malformed("update");
+            return;
+          }
+          if (!validBase(update, requestId)) return;
+          const rawLines = update.recentOutputLines;
+          const lines = rawLines === undefined ? undefined : ownArrayValues(rawLines, MAX_PROGRESS_LINES);
+          const recentTools = update.recentTools;
+          if (
+            !validOptionalString(update.currentTool) ||
+            !validOptionalString(update.currentToolArgs, MAX_PROGRESS_LINE_CHARS) ||
+            !validOptionalString(update.recentOutput, MAX_PROGRESS_LINE_CHARS) ||
+            !validOptionalString(update.model) ||
+            !validOptionalNumber(update.toolCount) ||
+            !validOptionalNumber(update.durationMs) ||
+            !validOptionalNumber(update.tokens) ||
+            (rawLines !== undefined &&
+              !(lines?.every((line) => typeof line === "string" && line.length <= MAX_PROGRESS_LINE_CHARS) ?? false)) ||
+            (recentTools !== undefined && !validKnownJson(recentTools))
+          ) {
+            malformed("update");
+            return;
+          }
           if (typeof update.model === "string") options.onModelResolved?.(update.model);
           const text =
             typeof update.recentOutput === "string"
               ? update.recentOutput
-              : Array.isArray(update.recentOutputLines)
-                ? update.recentOutputLines.filter((line): line is string => typeof line === "string").join("\n")
+              : lines
+                ? lines.join("\n")
                 : typeof update.currentTool === "string"
                   ? `Running ${update.currentTool}`
                   : "";
-          appendHistory(text);
+          appendHistory(text, true);
         }),
         events.on(PI_SUBAGENTS_RESPONSE_EVENT, (raw) => {
-          const terminal = correlated(raw);
-          if (!terminal || typeof terminal.status !== "string") return;
-          acknowledgeBridge();
+          const terminal = ownDataRecord(raw, RESPONSE_FIELDS);
+          if (!terminal) {
+            if (safelyTargets(raw, requestId)) malformed("response");
+            return;
+          }
+          if (!validBase(terminal, requestId)) return;
+          if (typeof terminal.output === "string" && terminal.output.length > MAX_FINAL_OUTPUT_CHARS) {
+            fail(
+              `pi-subagents final output exceeds ${MAX_FINAL_OUTPUT_CHARS} characters`,
+              WorkflowErrorCode.AGENT_EXECUTION_ERROR,
+              false,
+            );
+            return;
+          }
+          if (terminal.output !== undefined && typeof terminal.output !== "string") {
+            malformed("response");
+            return;
+          }
+          const rawWarnings = terminal.warnings;
+          const warnings = rawWarnings === undefined ? undefined : ownArrayValues(rawWarnings, MAX_WARNING_COUNT);
+          if (
+            typeof terminal.status !== "string" ||
+            !validOptionalString(terminal.error, MAX_PROGRESS_LINE_CHARS) ||
+            !validOptionalString(terminal.runId) ||
+            !validOptionalString(terminal.agent) ||
+            !validOptionalString(terminal.model) ||
+            !validOptionalString(terminal.outputPath, MAX_PROGRESS_LINE_CHARS) ||
+            !validOptionalString(terminal.sessionFile, MAX_PROGRESS_LINE_CHARS) ||
+            !validOptionalNumber(terminal.childIndex) ||
+            !validOptionalNumber(terminal.turns) ||
+            !validOptionalNumber(terminal.toolCount) ||
+            !validOptionalNumber(terminal.durationMs) ||
+            !validOptionalNumber(terminal.tokens) ||
+            (terminal.exitCode !== undefined &&
+              (typeof terminal.exitCode !== "number" || !Number.isInteger(terminal.exitCode))) ||
+            !validKnownJson(terminal.execution) ||
+            !validKnownJson(terminal.acceptance) ||
+            !validKnownJson(terminal.review) ||
+            !validKnownJson(terminal.effects) ||
+            (rawWarnings !== undefined &&
+              !(
+                warnings?.every((item) => typeof item === "string" && item.length <= MAX_PROTOCOL_STRING_CHARS) ?? false
+              ))
+          ) {
+            malformed("response");
+            return;
+          }
+
           if (!isTerminalStatus(terminal.status)) {
             fail(
               `pi-subagents returned unsupported protocol status ${JSON.stringify(terminal.status)}`,
@@ -172,15 +384,14 @@ export class PiSubagentsBackend {
             );
             return;
           }
+          acknowledgeBridge();
           const status = terminal.status;
           const details: PiSubagentsDiagnosticDetails = {
             ...(typeof terminal.runId === "string" ? { runId: terminal.runId } : {}),
             ...(typeof terminal.model === "string" ? { model: terminal.model } : {}),
             ...(typeof terminal.outputPath === "string" ? { outputPath: terminal.outputPath } : {}),
             ...(typeof terminal.sessionFile === "string" ? { sessionFile: terminal.sessionFile } : {}),
-            ...(Array.isArray(terminal.warnings)
-              ? { warnings: terminal.warnings.filter((item): item is string => typeof item === "string") }
-              : {}),
+            ...(warnings ? { warnings: warnings as string[] } : {}),
           };
           options.onDiagnostics?.(details);
           if (typeof terminal.model === "string") options.onModelResolved?.(terminal.model);
@@ -243,17 +454,6 @@ export class PiSubagentsBackend {
           false,
         );
       }, this.handshakeTimeoutMs);
-      if (delegatedTimeoutMs !== undefined) {
-        timer = setTimeout(() => {
-          emitCancel();
-          fail(
-            `pi-subagents delegation timed out after ${delegatedTimeoutMs}ms`,
-            WorkflowErrorCode.AGENT_TIMEOUT,
-            true,
-          );
-        }, delegatedTimeoutMs);
-        timer.unref?.();
-      }
       try {
         const request = {
           version: PI_SUBAGENTS_PROTOCOL_VERSION,
