@@ -519,6 +519,36 @@ return await agent('task', { backend: 'pi-subagents' })`,
   assert.equal(runs, 0);
 });
 
+test("workflow negotiates a tier-routed delegated model before reserving or starting an agent", async () => {
+  const bus = createEventBus();
+  registerSubagentDelegationProvider(bus, {
+    ...DEFAULT_SUBAGENT_DELEGATION_PROVIDER,
+    protocols: DEFAULT_SUBAGENT_DELEGATION_PROVIDER.protocols.map((protocol) =>
+      protocol.version === 1 ? { ...protocol, requestFields: { ...protocol.requestFields, model: false } } : protocol,
+    ),
+  });
+  let requests = 0;
+  let starts = 0;
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, () => requests++);
+
+  await assert.rejects(
+    runWorkflow(
+      `export const meta = { name: 'tier_preflight', description: 'tier preflight' }
+return await agent('task', { backend: 'pi-subagents', tier: 'medium' })`,
+      {
+        cwd: "/repo",
+        mainModel: "vendor/default",
+        piSubagentsEvents: bus,
+        persistLogs: false,
+        onAgentStart: () => starts++,
+      },
+    ),
+    /does not support requested model routing/i,
+  );
+  assert.equal(starts, 0);
+  assert.equal(requests, 0);
+});
+
 test("WorkflowAgent delegates an explicit role without overriding its configured model", async () => {
   const bus = reviewedBus();
   let request: any;

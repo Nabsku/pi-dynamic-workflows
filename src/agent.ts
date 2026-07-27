@@ -558,7 +558,14 @@ export class WorkflowAgent {
 
   preflight(options: AgentRunOptions<TSchema>): void {
     if (options.backend !== "pi-subagents") return;
-    this.piSubagentsBackend.negotiate({ model: options.model, timeoutMs: options.timeoutMs });
+    // Tier routing is resolved synchronously from this run's memoized config so
+    // request-field compatibility is checked before workflow.ts reserves a slot
+    // or emits onAgentStart. Agent.run() still resolves the spec against the
+    // registry before forwarding its canonical provider/model value.
+    const requestedModel = options.tier
+      ? resolveAgentModelSpec(options, this.mainModel, () => this.loadTierConfig())
+      : options.model;
+    this.piSubagentsBackend.negotiate({ model: requestedModel, timeoutMs: options.timeoutMs });
   }
 
   /**
