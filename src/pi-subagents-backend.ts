@@ -398,7 +398,7 @@ export class PiSubagentsBackend {
           if (typeof terminal.tokens === "number" && Number.isFinite(terminal.tokens) && terminal.tokens >= 0) {
             // Protocol v1 reports only a total. Do not fabricate an input/output
             // split or cost; the workflow still receives the authoritative total.
-            options.onUsage?.({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: terminal.tokens, cost: 0 });
+            options.onUsage?.({ total: terminal.tokens, provenance: "pi-subagents-v1" });
           }
           if (status === "completed") {
             const output = typeof terminal.output === "string" ? terminal.output : "";

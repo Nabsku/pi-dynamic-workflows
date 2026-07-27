@@ -79,8 +79,8 @@ return await agent(
 - **Per-agent model routing** — use `small`, `medium`, or `big` tiers, or choose an exact provider/model and thinking level.
 - **Journaled resume** — replay completed agents after interruption without rerunning them or spending their tokens again. The orchestrator can also resume with an **edited script** (`resumeFromRunId`): unchanged `agent()` calls replay from cache and only edited/new ones re-run — so a single bad prompt no longer means paying to re-run the whole workflow.
 - **Git worktree isolation** — let parallel agents edit safely on throwaway branches with `isolation: "worktree"`.
-- **Measured usage** — report real tokens and cost from each subagent session; add run, phase, or agent budgets only when you want them.
-- **Visible background runs** — track phases, agents, models, fresh/cache tokens, cost, and live tok/s from the progress panel or `/workflows` navigator.
+- **Truthful usage** — native sessions report measured token splits and cost; aggregate-only delegated backends preserve their reported total and mark unavailable splits/cost as unknown.
+- **Visible background runs** — track phases, agents, models, token totals, measured fresh/cache splits and cost when available, and live tok/s from the progress panel or `/workflows` navigator.
 - **Quality patterns** — compose `verify()`, `judgePanel()`, `loopUntilDry()`, and `completenessCheck()` instead of rebuilding review loops.
 - **Reusable workflows** — save any run as a command and call saved workflows from other workflows.
 

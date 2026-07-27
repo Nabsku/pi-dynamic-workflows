@@ -369,14 +369,17 @@ function warnPersistSecretsOnce(sessionDir: string): void {
   );
 }
 
-/** Real token/cost usage for a single subagent run, read from the SDK session. */
+export type AgentUsageProvenance = "native" | "pi-subagents-v1" | "estimated" | "mixed";
+
+/** Canonical usage. Optional dimensions are absent when the source cannot measure them. */
 export interface AgentUsage {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
   total: number;
-  cost: number;
+  cost?: number;
+  provenance?: AgentUsageProvenance;
 }
 
 /**
@@ -398,6 +401,7 @@ export function usageFromStats(stats: {
     cacheWrite: tokens.cacheWrite,
     total: tokens.total,
     cost,
+    provenance: "native",
   };
 }
 

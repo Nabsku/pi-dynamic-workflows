@@ -112,7 +112,7 @@ interface RunRow {
   fresh: number;
   /** Cache-read tokens for the whole run. */
   cacheRead: number;
-  cost: number;
+  cost?: number;
 }
 interface PhaseRow {
   title: string;
@@ -242,7 +242,7 @@ export class NavigatorModel {
         total: agents.length,
         fresh: figures.fresh,
         cacheRead: figures.cacheRead,
-        cost: usage?.cost ?? 0,
+        cost: usage?.cost,
       };
     });
   }
@@ -1076,7 +1076,8 @@ function renderNavigatorFrame(
         if (!r) continue;
         const icon = STATUS_ICON[r.status] ?? "?";
         const tok = fmtTokenSegment(r, pad);
-        const meta = [`${r.done}/${r.total}`, tok, r.cost > 0 ? fmtCost(r.cost) : ""].filter(Boolean).join(" · ");
+        const cost = r.fresh + r.cacheRead > 0 ? (r.cost === undefined ? "cost unknown" : fmtCost(r.cost)) : "";
+        const meta = [`${r.done}/${r.total}`, tok, cost].filter(Boolean).join(" · ");
         lines.push(sel(i, `${icon} ${r.name}  ${dim(`${r.runId} · ${r.status} · ${meta}`)}`));
       } else {
         const w = saved[i - runs.length];

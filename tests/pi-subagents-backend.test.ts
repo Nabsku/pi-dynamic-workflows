@@ -85,7 +85,7 @@ test("pi-subagents backend sends only protocol v1 and maps start/update/usage/hi
   assert.equal(request.timeoutMs, 500);
   assert.match(request.requestId, /^[0-9a-f-]{36}$/);
   assert.equal(models.at(-1), "vendor/resolved");
-  assert.equal(usages.at(-1).total, 21);
+  assert.deepEqual(usages.at(-1), { total: 21, provenance: "pi-subagents-v1" });
   assert.ok(histories.flat().some((h: any) => h.text.includes("working")));
   assert.deepEqual(diagnostics.at(-1), {
     model: "vendor/resolved",

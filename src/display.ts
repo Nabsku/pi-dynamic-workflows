@@ -42,14 +42,7 @@ export interface WorkflowSnapshot {
   errorCount: number;
   durationMs?: number;
   result?: unknown;
-  tokenUsage?: {
-    input: number;
-    output: number;
-    total: number;
-    cost?: number;
-    cacheRead?: number;
-    cacheWrite?: number;
-  };
+  tokenUsage?: AgentUsage;
   runId?: string;
 }
 
@@ -84,26 +77,31 @@ export interface WorkflowDisplayOptions {
 export function tokenFigures(
   usage: Partial<AgentUsage> | undefined,
   scalarTokens?: number,
-): { fresh: number; cacheRead: number } {
+): { fresh: number; cacheRead: number; splitKnown?: false } {
+  const splitKnown = usage !== undefined && usage.input !== undefined && usage.output !== undefined;
   const cacheRead = usage?.cacheRead ?? 0;
   const reported = (usage?.input ?? 0) + (usage?.output ?? 0) + (usage?.cacheWrite ?? 0);
   const estimate = Math.max(scalarTokens ?? 0, usage?.total ?? 0);
-  return { fresh: Math.max(reported, estimate - cacheRead), cacheRead };
+  const figures = { fresh: Math.max(reported, estimate - cacheRead), cacheRead };
+  return usage && !splitKnown ? { ...figures, splitKnown: false } : figures;
 }
 
 /** Sum a set of agents into fresh vs cacheRead totals, via {@link tokenFigures}. */
 export function aggregateAgentUsage(agents: ReadonlyArray<Pick<WorkflowAgentSnapshot, "tokens" | "tokenUsage">>): {
   fresh: number;
   cacheRead: number;
+  splitKnown: boolean;
 } {
   let fresh = 0;
   let cacheRead = 0;
+  let splitKnown = agents.length > 0;
   for (const a of agents) {
     const f = tokenFigures(a.tokenUsage, a.tokens);
     fresh += f.fresh;
     cacheRead += f.cacheRead;
+    splitKnown &&= f.splitKnown !== false;
   }
-  return { fresh, cacheRead };
+  return { fresh, cacheRead, splitKnown };
 }
 
 /**
@@ -125,8 +123,23 @@ export function fmtTokenCount(fresh: number, cacheRead: number, fmt: (n: number)
  * journal-replayed resume or a run whose agents were all skipped. Every surface
  * should use this rather than re-implementing the zero guard.
  */
-export function fmtTokenSegment(figures: { fresh: number; cacheRead: number }, fmt: (n: number) => string): string {
-  return figures.fresh + figures.cacheRead > 0 ? fmtTokenCount(figures.fresh, figures.cacheRead, fmt) : "";
+export function fmtTokenSegment(
+  figures: { fresh: number; cacheRead: number; splitKnown?: boolean },
+  fmt: (n: number) => string,
+): string {
+  if (figures.fresh + figures.cacheRead <= 0) return "";
+  return figures.splitKnown === false
+    ? `${fmt(figures.fresh + figures.cacheRead)} tok (split unknown)`
+    : fmtTokenCount(figures.fresh, figures.cacheRead, fmt);
+}
+
+/** Render measured cost, or explicitly mark it unknown for accounted usage. */
+export function fmtUsageCost(
+  usage: Pick<AgentUsage, "cost" | "total"> | undefined,
+  accountedTotal = usage?.total ?? 0,
+): string {
+  if (!usage || accountedTotal <= 0) return "";
+  return usage.cost === undefined ? "cost unknown" : fmtCost(usage.cost);
 }
 
 /**
@@ -269,7 +282,8 @@ export function renderWorkflowLines(
         : "";
   // Build header with token info (and cost when the provider reports it)
   const usage = snapshot.tokenUsage;
-  const costInfo = usage?.cost ? ` · ${fmtCost(usage.cost)}` : "";
+  const formattedCost = fmtUsageCost(usage);
+  const costInfo = formattedCost ? ` · ${formattedCost}` : "";
   const segment = fmtTokenSegment(tokenFigures(usage), fmtFull);
   const tokenInfo = `${segment ? ` · ${segment}` : ""}${costInfo}`;
   const lines = [

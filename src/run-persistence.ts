@@ -67,12 +67,13 @@ export interface PersistedRunState {
   completedAt?: string;
   durationMs?: number;
   tokenUsage?: {
-    input: number;
-    output: number;
+    input?: number;
+    output?: number;
     total: number;
     cost?: number;
     cacheRead?: number;
     cacheWrite?: number;
+    provenance?: AgentUsage["provenance"];
   };
   /**
    * Cached agent/checkpoint results for resume, keyed by deterministic call

@@ -4,7 +4,7 @@
 
 import { EventEmitter } from "node:events";
 import type { EventBus, ModelRegistry, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { WorkflowAgent } from "./agent.js";
+import type { AgentUsage, WorkflowAgent } from "./agent.js";
 import { preview, type WorkflowAgentSnapshot, type WorkflowSnapshot } from "./display.js";
 import { isProviderUsageLimit, WorkflowError, WorkflowErrorCode } from "./errors.js";
 import {
@@ -161,14 +161,7 @@ export interface ExecOptions {
    * execution's fresh SharedRuntime starts counting from the already-spent
    * total instead of zero (see A2 in workflow-manager's resume()).
    */
-  initialTokenUsage?: {
-    input: number;
-    output: number;
-    total: number;
-    cost: number;
-    cacheRead: number;
-    cacheWrite: number;
-  };
+  initialTokenUsage?: AgentUsage;
 }
 
 export interface WorkflowManagerOptions {
@@ -680,8 +673,8 @@ export class WorkflowManager extends EventEmitter {
         // shared.spent/tokenUsage, but onAgentEnd never sees a retried
         // (non-final) attempt — fold it into the same persisted aggregate here
         // so a run paused after a retry doesn't under-count against the budget.
-        onRetrySpend: (tokens) => {
-          this.accumulateTokenUsage(managed, tokens);
+        onRetrySpend: (tokens, usage) => {
+          this.accumulateTokenUsage(managed, tokens, usage);
         },
         onAgentJournal: (entry) => {
           // Append (crash-safe-ish): keep the latest entry per (runId, index)
@@ -936,27 +929,30 @@ export class WorkflowManager extends EventEmitter {
    * shared.spent/tokenUsage in workflow.ts, but which onAgentEnd never sees —
    * see WorkflowRunOptions.onRetrySpend for why that needs its own channel).
    */
-  private accumulateTokenUsage(
-    managed: ManagedRun,
-    tokens: number,
-    tokenUsage?: { input: number; output: number; cost: number; cacheRead: number; cacheWrite: number },
-  ): void {
+  private accumulateTokenUsage(managed: ManagedRun, tokens: number, tokenUsage?: AgentUsage): void {
     const prior = managed.snapshot.tokenUsage;
-    const usage = {
-      input: prior?.input ?? 0,
-      output: prior?.output ?? 0,
+    const usage: AgentUsage = {
+      input: prior?.input,
+      output: prior?.output,
       total: prior?.total ?? 0,
-      cost: prior?.cost ?? 0,
-      cacheRead: prior?.cacheRead ?? 0,
-      cacheWrite: prior?.cacheWrite ?? 0,
+      cost: prior?.cost,
+      cacheRead: prior?.cacheRead,
+      cacheWrite: prior?.cacheWrite,
+      provenance: prior?.provenance,
     };
     usage.total += tokens;
     if (tokenUsage) {
-      usage.input += tokenUsage.input;
-      usage.output += tokenUsage.output;
-      usage.cost += tokenUsage.cost;
-      usage.cacheRead += tokenUsage.cacheRead;
-      usage.cacheWrite += tokenUsage.cacheWrite;
+      for (const key of ["input", "output", "cost", "cacheRead", "cacheWrite"] as const) {
+        const next = tokenUsage[key];
+        usage[key] =
+          next === undefined || (prior !== undefined && usage[key] === undefined)
+            ? undefined
+            : (usage[key] ?? 0) + next;
+      }
+      usage.provenance = !prior || prior.provenance === tokenUsage.provenance ? tokenUsage.provenance : "mixed";
+    } else {
+      usage.input = usage.output = usage.cost = usage.cacheRead = usage.cacheWrite = undefined;
+      usage.provenance = prior ? "mixed" : "estimated";
     }
     managed.snapshot.tokenUsage = usage;
   }
@@ -1171,9 +1167,10 @@ export class WorkflowManager extends EventEmitter {
           input: persisted.tokenUsage.input,
           output: persisted.tokenUsage.output,
           total: persisted.tokenUsage.total,
-          cost: persisted.tokenUsage.cost ?? 0,
-          cacheRead: persisted.tokenUsage.cacheRead ?? 0,
-          cacheWrite: persisted.tokenUsage.cacheWrite ?? 0,
+          cost: persisted.tokenUsage.cost,
+          cacheRead: persisted.tokenUsage.cacheRead,
+          cacheWrite: persisted.tokenUsage.cacheWrite,
+          provenance: persisted.tokenUsage.provenance,
         }
       : undefined;
 

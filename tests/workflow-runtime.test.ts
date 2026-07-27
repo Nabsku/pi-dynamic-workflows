@@ -224,6 +224,28 @@ test("runWorkflow accumulates real per-agent usage (incl. cost + cache tokens)",
   assert.equal(result.tokenUsage?.cacheWrite, 20, "cacheWrite accumulates across agents");
 });
 
+test("runWorkflow preserves aggregate-only delegated usage across retries without inventing dimensions", async () => {
+  let attempts = 0;
+  const agent = {
+    async run(_prompt: string, options: { onUsage?: (u: AgentUsage) => void }) {
+      options.onUsage?.({ total: 21, provenance: "pi-subagents-v1" });
+      if (++attempts === 1) throw new Error("transient");
+      return "ok";
+    },
+  };
+  const result = await runWorkflow(
+    `export const meta = { name: 'delegated_usage', description: 'aggregate accounting' }
+     return await agent('x', { retries: 1 })`,
+    { agent, persistLogs: false },
+  );
+
+  assert.equal(result.tokenUsage?.total, 42);
+  assert.equal(result.tokenUsage?.input, undefined);
+  assert.equal(result.tokenUsage?.output, undefined);
+  assert.equal(result.tokenUsage?.cost, undefined);
+  assert.equal(result.tokenUsage?.provenance, "pi-subagents-v1");
+});
+
 test("meta.model is parsed and routes as the default model for agents", async () => {
   let seenModel: string | undefined;
   const recorder = {

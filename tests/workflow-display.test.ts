@@ -228,6 +228,16 @@ describe("renderWorkflowText", () => {
     assert.deepEqual(tokenFigures(undefined), { fresh: 0, cacheRead: 0 });
   });
 
+  it("renders aggregate-only delegated accounting as unknown rather than zero", async () => {
+    const { createWorkflowSnapshot, renderWorkflowLines } = await loadDisplay();
+    const snap = createWorkflowSnapshot(fakeMeta());
+    snap.tokenUsage = { total: 800, provenance: "pi-subagents-v1" };
+    const text = renderWorkflowLines(snap).join("\n");
+    assert.match(text, /800 tok \(split unknown\)/);
+    assert.match(text, /cost unknown/);
+    assert.ok(!text.includes("$0"));
+  });
+
   it("header falls back to the estimated total when the provider reported no usage (#57 regression)", async () => {
     const { createWorkflowSnapshot, renderWorkflowLines } = await loadDisplay();
     const snap = createWorkflowSnapshot(fakeMeta());

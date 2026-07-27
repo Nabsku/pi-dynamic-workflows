@@ -1090,7 +1090,15 @@ test("usageFromStats maps real stats to an AgentUsage", () => {
     tokens: { input: 100, output: 50, cacheRead: 900, cacheWrite: 30, total: 1080 },
     cost: 0.42,
   });
-  assert.deepEqual(usage, { input: 100, output: 50, cacheRead: 900, cacheWrite: 30, total: 1080, cost: 0.42 });
+  assert.deepEqual(usage, {
+    input: 100,
+    output: 50,
+    cacheRead: 900,
+    cacheWrite: 30,
+    total: 1080,
+    cost: 0.42,
+    provenance: "native",
+  });
 });
 
 test("usageFromStats returns undefined for all-zero stats (provider reported nothing)", () => {

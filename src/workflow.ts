@@ -94,7 +94,7 @@ export interface SharedRuntime {
   limiter: <T>(fn: () => Promise<T>) => Promise<T>;
   agentCount: number;
   spent: number;
-  tokenUsage: { input: number; output: number; total: number; cost: number; cacheRead: number; cacheWrite: number };
+  tokenUsage: AgentUsage;
   depth: number;
   /**
    * Monotonic count of every workflow() call anywhere in this run tree,
@@ -205,7 +205,7 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
    * changing onAgentEnd's one-call-per-agent-call cadence (a contract other
    * code depends on).
    */
-  onRetrySpend?: (tokens: number) => void;
+  onRetrySpend?: (tokens: number, usage?: AgentUsage) => void;
   /** Internal: shared runtime inherited by a nested workflow() call. */
   sharedRuntime?: SharedRuntime;
   /**
@@ -218,14 +218,7 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
    * enforce the ceiling against only what THIS execution spends, ignoring
    * whatever was already spent before the pause.
    */
-  initialTokenUsage?: {
-    input: number;
-    output: number;
-    total: number;
-    cost: number;
-    cacheRead: number;
-    cacheWrite: number;
-  };
+  initialTokenUsage?: AgentUsage;
   /**
    * Shared store for this run. One instance is created per top-level run and
    * propagated into nested workflow() calls. Pass an existing instance to share
@@ -267,14 +260,7 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
     recoverable?: boolean;
   }) => void;
   onAgentHistory?: (event: { id: string; label: string; phase?: string; history: AgentHistoryEntry[] }) => void;
-  onTokenUsage?: (usage: {
-    input: number;
-    output: number;
-    total: number;
-    cost: number;
-    cacheRead?: number;
-    cacheWrite?: number;
-  }) => void;
+  onTokenUsage?: (usage: AgentUsage) => void;
 }
 
 export interface WorkflowRunResult<T = unknown> {
@@ -285,14 +271,7 @@ export interface WorkflowRunResult<T = unknown> {
   agentCount: number;
   durationMs: number;
   runId?: string;
-  tokenUsage?: {
-    input: number;
-    output: number;
-    total: number;
-    cost: number;
-    cacheRead?: number;
-    cacheWrite?: number;
-  };
+  tokenUsage?: AgentUsage;
 }
 
 export interface AgentOptions<TSchemaDef extends TSchema | undefined = TSchema | undefined> {
@@ -716,11 +695,23 @@ export async function runWorkflow<T = unknown>(
       const recordTokens = (result: unknown): number => {
         const tokens = usage && usage.total > 0 ? usage.total : estimateTokens(result) + estimateTokens(prompt);
         if (usage) {
-          shared.tokenUsage.input += usage.input;
-          shared.tokenUsage.output += usage.output;
-          shared.tokenUsage.cost += usage.cost;
-          shared.tokenUsage.cacheRead += usage.cacheRead;
-          shared.tokenUsage.cacheWrite += usage.cacheWrite;
+          const hadUsage = shared.tokenUsage.total > 0 || shared.tokenUsage.provenance !== undefined;
+          for (const key of ["input", "output", "cost", "cacheRead", "cacheWrite"] as const) {
+            const next = usage[key];
+            shared.tokenUsage[key] =
+              next === undefined || (hadUsage && shared.tokenUsage[key] === undefined)
+                ? undefined
+                : (shared.tokenUsage[key] ?? 0) + next;
+          }
+          shared.tokenUsage.provenance =
+            !hadUsage || shared.tokenUsage.provenance === usage.provenance ? usage.provenance : "mixed";
+        } else {
+          shared.tokenUsage.input = undefined;
+          shared.tokenUsage.output = undefined;
+          shared.tokenUsage.cacheRead = undefined;
+          shared.tokenUsage.cacheWrite = undefined;
+          shared.tokenUsage.cost = undefined;
+          shared.tokenUsage.provenance = shared.tokenUsage.provenance ? "mixed" : "estimated";
         }
         shared.tokenUsage.total += tokens;
         shared.spent += tokens;
@@ -856,7 +847,7 @@ export async function runWorkflow<T = unknown>(
               // above (recordTokens) — but it will never reach onAgentEnd (only
               // the final attempt does), so report it on the dedicated channel
               // instead (see WorkflowRunOptions.onRetrySpend).
-              options.onRetrySpend?.(tokens);
+              options.onRetrySpend?.(tokens, usage);
               continue;
             }
 

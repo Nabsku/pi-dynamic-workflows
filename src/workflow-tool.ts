@@ -5,9 +5,9 @@ import { BUILTIN_WORKFLOW_NAMES, resolveWorkflowInvocation } from "./builtin-wor
 import {
   createToolUpdateWorkflowDisplay,
   createWorkflowSnapshot,
-  fmtCost,
   fmtFull,
   fmtTokenSegment,
+  fmtUsageCost,
   recomputeWorkflowSnapshot,
   renderWorkflowText,
   tokenFigures,
@@ -308,7 +308,7 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
       // Format token usage (include cost when the provider reports it)
       const tokenSegment = fmtTokenSegment(tokenFigures(result.tokenUsage), fmtFull);
       const tokenInfo = tokenSegment
-        ? `\n\nToken usage: ${tokenSegment}${result.tokenUsage?.cost ? ` (${fmtCost(result.tokenUsage.cost)})` : ""}`
+        ? `\n\nToken usage: ${tokenSegment}${fmtUsageCost(result.tokenUsage) ? ` (${fmtUsageCost(result.tokenUsage)})` : ""}`
         : "";
 
       const formattedResult =

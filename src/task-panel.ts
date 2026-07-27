@@ -11,8 +11,8 @@ import type { ExtensionAPI, ExtensionUIContext, Theme } from "@earendil-works/pi
 import { type Component, type TUI, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
   aggregateAgentUsage,
-  fmtCost,
   fmtTokenSegment,
+  fmtUsageCost,
   shorten,
   statusIcon,
   tokenFigures,
@@ -101,7 +101,8 @@ function fitLine(line: string, width?: number): string {
 export function deliverText(run: ManagedRun, opts: { resultPath?: string; maxChars?: number } = {}): string {
   const summary = summarizeResult(run.result?.result, opts.maxChars);
   const tu = run.result?.tokenUsage;
-  const cost = tu?.cost ? ` · ${fmtCost(tu.cost)}` : "";
+  const formattedCost = fmtUsageCost(tu);
+  const cost = formattedCost ? ` · ${formattedCost}` : "";
   const segment = fmtTokenSegment(tokenFigures(tu), fmtTokensShort);
   const tokens = `${segment ? ` · ${segment}` : ""}${cost}`;
   const agents = run.result?.agentCount ?? run.snapshot.agentCount;
@@ -400,8 +401,8 @@ export function renderPanelDetailed(
       `${done}/${agents.length} agents`,
       snap?.currentPhase || "",
       fmtTokenSegment(runUsage, fmtTokensShort),
-      // (cost is only known once the run finalizes its usage.)
-      usage?.cost ? fmtCost(usage.cost) : "",
+      // Cost may remain unknown for aggregate-only delegated accounting.
+      fmtUsageCost(usage, runUsage.fresh + runUsage.cacheRead),
       rate > 0 ? `${Math.round(rate)} tok/s` : "",
     ]
       .filter(Boolean)
