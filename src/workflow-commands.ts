@@ -107,6 +107,8 @@ function renderPersistedStatus(run: PersistedRunState): string {
     const delegated = agent.delegatedDiagnostics;
     if (delegated) {
       lines.push(`    backend: ${delegated.backend} · role: ${delegated.role} (${delegated.roleSemantics})`);
+      if (delegated.requestedModel)
+        lines.push(`    requested model: ${delegated.requestedModel} (${delegated.modelPrecedence} precedence)`);
       if (delegated.effectiveModel)
         lines.push(`    effective model: ${delegated.effectiveModel} (${delegated.modelPrecedence} precedence)`);
       lines.push(`    provider status: ${delegated.providerStatus} · provenance: bridge-reported`);

@@ -769,7 +769,12 @@ export class WorkflowAgent {
       if (resolved.model) {
         resolvedModel = resolved.model;
         resolvedThinkingLevel = resolved.thinkingLevel;
-        options.onModelResolved?.(resolved.resolvedSpec ?? canonicalModelSpec(resolved.model));
+        // For delegated runs this resolution proves only which model was
+        // requested on the wire. The provider remains authoritative for the
+        // effective model and reports it through the bridge callback below.
+        if (options.backend !== "pi-subagents") {
+          options.onModelResolved?.(resolved.resolvedSpec ?? canonicalModelSpec(resolved.model));
+        }
       } else {
         console.warn(`[workflow] model "${modelSpec}" not found; using session default`);
         options.onModelFallback?.(modelSpec);

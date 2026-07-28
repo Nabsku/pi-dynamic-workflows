@@ -17,8 +17,10 @@ import {
   PI_SUBAGENTS_RESPONSE_EVENT,
   PI_SUBAGENTS_STARTED_EVENT,
 } from "../src/pi-subagents-backend.js";
+import { registerWorkflowCommands } from "../src/workflow-commands.js";
 import { WorkflowManager } from "../src/workflow-manager.js";
 import { createWorkflowTool } from "../src/workflow-tool.js";
+import { NavigatorModel, NavigatorState, renderNavigator } from "../src/workflow-ui.js";
 import { withFakeHomeAsync } from "./helpers/fake-home.js";
 
 const parallelScript = `export const meta = { name: 'delegated_lifecycle', description: 'delegated lifecycle' }
@@ -32,6 +34,9 @@ const serialScript = `export const meta = { name: 'delegated_resume', descriptio
 const first = await agent('first task', { backend: 'pi-subagents' })
 const second = await agent('second task', { backend: 'pi-subagents' })
 return { first, second }`;
+
+const requestedModelScript = `export const meta = { name: 'delegated_requested_model', description: 'requested model evidence', model: 'vendor/requested' }
+return await agent('requested model task', { backend: 'pi-subagents', agentType: 'reviewer' })`;
 
 function reviewedBus(): EventBus {
   const bus = createEventBus();
@@ -68,6 +73,60 @@ async function waitFor(predicate: () => boolean, message: string): Promise<void>
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }
+
+test(
+  "pi-subagents lifecycle: requested model stays labeled and never becomes observed model without terminal evidence",
+  withTempRuntime(async (cwd) => {
+    const bus = reviewedBus();
+    bus.on(PI_SUBAGENTS_REQUEST_EVENT, (request: any) => {
+      assert.equal(request.model, "vendor/requested");
+      bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(request.requestId, "done without model evidence"));
+    });
+    const manager = new WorkflowManager({ cwd, piSubagentsEvents: bus });
+    manager.setModelRegistry({ getAll: () => [{ provider: "vendor", id: "requested" }] } as any);
+    const run = manager.startInBackground(requestedModelScript);
+    await run.promise;
+
+    const persisted = manager.getPersistence().load(run.runId);
+    const agent = persisted?.agents[0];
+    assert.equal(agent?.model, undefined, "requested model must not persist as a generic observed model");
+    assert.equal(agent?.delegatedDiagnostics?.requestedModel, "vendor/requested");
+    assert.equal(agent?.delegatedDiagnostics?.effectiveModel, undefined);
+
+    const reloaded = new WorkflowManager({ cwd });
+    const reloadedAgent = reloaded.listRuns().find(({ runId }) => runId === run.runId)?.agents[0];
+    assert.equal(reloadedAgent?.model, undefined);
+    assert.equal(reloadedAgent?.delegatedDiagnostics?.requestedModel, "vendor/requested");
+
+    let commandHandler: ((args: string, ctx: any) => Promise<void>) | undefined;
+    const printed: string[] = [];
+    registerWorkflowCommands(
+      {
+        getCommands: () => [],
+        registerCommand: (_name: string, options: any) => {
+          commandHandler = options.handler;
+        },
+        sendMessage: async (message: any) => printed.push(message.content),
+      } as any,
+      reloaded,
+    );
+    assert.ok(commandHandler);
+    await commandHandler(`status ${run.runId}`, { ui: { notify: () => {}, setStatus: () => {} } });
+    assert.match(printed[0], /requested model: vendor\/requested \(phase precedence\)/);
+    assert.doesNotMatch(printed[0], /effective model:/);
+
+    const navigator = new NavigatorModel(reloaded);
+    const state = new NavigatorState();
+    assert.equal(state.drill(navigator), true);
+    assert.equal(state.drill(navigator), true);
+    assert.equal(state.drill(navigator), true);
+    state.togglePager();
+    const detail = renderNavigator(state, navigator, 100).join("\n");
+    assert.match(detail, /Requested model: vendor\/requested \(phase precedence\)/);
+    assert.doesNotMatch(detail, /(?:^|\n)Model: requested(?:\n|$)/);
+    assert.doesNotMatch(detail, /Effective model:/);
+  }),
+);
 
 test(
   "pi-subagents lifecycle: foreground waits while default background survives the initiating turn and settles parallel nodes",

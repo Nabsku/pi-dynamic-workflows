@@ -610,10 +610,11 @@ export async function runWorkflow<T = unknown>(
     const explicitModel = agentOptions.model ?? agentDef?.model;
     const modelSpec =
       explicitModel ?? (agentOptions.tier ? undefined : resolveModelForPhase(assignedPhase, routingConfig));
-    // For display in /workflows: the model this agent runs on — its explicit/phase
-    // spec, else the session's main model. The real resolved id overrides this via
-    // onModelResolved once the subagent session is created.
-    let displayModel = modelSpec ?? options.mainModel;
+    // For native agents, the requested/session model is also our best runtime
+    // model evidence until the session reports the resolved id. Delegated model
+    // selection belongs to pi-subagents, so keep requested intent in delegated
+    // diagnostics and expose `model` only after bridge-reported evidence arrives.
+    let displayModel = agentOptions.backend === "pi-subagents" ? undefined : (modelSpec ?? options.mainModel);
 
     // Fail unavailable or drifted delegated providers before reserving capacity.
     // This synchronous discovery is not request acknowledgement.
@@ -665,14 +666,16 @@ export async function runWorkflow<T = unknown>(
     const hashMatches = cached != null && cached.hash === callHash;
     const cachedEmptyOutput = hashMatches && isEmptyTextAgentResult(cached.result, agentOptions.schema);
     if (hashMatches && !cachedEmptyOutput && callIndex < state.firstMiss) {
-      options.onAgentStart?.({ id: deltaKey, label, phase: assignedPhase, prompt, model: displayModel });
+      const replayModel =
+        agentOptions.backend === "pi-subagents" ? cached.delegatedDiagnostics?.effectiveModel : displayModel;
+      options.onAgentStart?.({ id: deltaKey, label, phase: assignedPhase, prompt, model: replayModel });
       options.onAgentEnd?.({
         id: deltaKey,
         label,
         phase: assignedPhase,
         result: cached.result,
         tokens: 0,
-        model: displayModel,
+        model: replayModel,
         delegatedDiagnostics: cached.delegatedDiagnostics,
       });
       // Apply this agent's write delta so live agents later in the run see a

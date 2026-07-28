@@ -205,8 +205,8 @@ test("/workflows status renders canonical delegated diagnostics and recovery", a
   await h.run("status run-delegated");
   assert.match(h.printed[0], /backend: pi-subagents/);
   assert.match(h.printed[0], /role: reviewer \(pi-subagents-provider-role\)/);
+  assert.match(h.printed[0], /requested model: vendor\/requested \(explicit precedence\)/);
   assert.doesNotMatch(h.printed[0], /effective model:/);
-  assert.doesNotMatch(h.printed[0], /vendor\/requested/);
   assert.match(h.printed[0], /provider status: timed_out · provenance: bridge-reported/);
   assert.match(h.printed[0], /recovery: Increase timeoutMs/);
 });

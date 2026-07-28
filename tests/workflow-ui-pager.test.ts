@@ -163,8 +163,8 @@ test("delegated agent detail shows backend role model provenance and recovery", 
   assert.match(summary, /Recovery: Increase timeoutMs/);
   state.togglePager();
   const pager = renderNavigator(state, model, 100, undefined, 30).join("\n");
+  assert.match(pager, /Requested model: vendor\/requested \(tier precedence\)/);
   assert.doesNotMatch(pager, /Effective model:/);
-  assert.doesNotMatch(pager, /vendor\/requested/);
 });
 
 test("tail mode follows appended history and scrolling up disables follow", () => {

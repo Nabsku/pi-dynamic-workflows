@@ -376,6 +376,7 @@ function persistedToSnapshot(p: PersistedRunState): WorkflowSnapshot {
       tokens: a.tokens,
       tokenUsage: a.tokenUsage,
       model: a.model,
+      delegatedDiagnostics: a.delegatedDiagnostics,
     };
   });
   return {
@@ -1117,6 +1118,8 @@ function renderNavigatorFrame(
         if (a.delegatedDiagnostics) {
           const d = a.delegatedDiagnostics;
           body.push(`${dim("Backend: ")}${d.backend} · role ${d.role} (${d.roleSemantics})`);
+          if (d.requestedModel)
+            body.push(`${dim("Requested model: ")}${d.requestedModel} (${d.modelPrecedence} precedence)`);
           if (d.effectiveModel)
             body.push(`${dim("Effective model: ")}${d.effectiveModel} (${d.modelPrecedence} precedence)`);
           body.push(`${dim("Provider status: ")}${d.providerStatus} · bridge-reported provenance`);
@@ -1150,6 +1153,8 @@ function renderNavigatorFrame(
         if (a.delegatedDiagnostics) {
           const d = a.delegatedDiagnostics;
           body.push(`${dim("Backend: ")}${d.backend} · role ${d.role} (${d.roleSemantics})`);
+          if (d.requestedModel)
+            body.push(`${dim("Requested model: ")}${d.requestedModel} (${d.modelPrecedence} precedence)`);
           body.push(`${dim("Provider status: ")}${d.providerStatus} · bridge-reported provenance`);
           if (d.recoveryHint) body.push(dim("Recovery: ") + d.recoveryHint);
         }
