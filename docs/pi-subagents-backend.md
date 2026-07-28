@@ -63,7 +63,7 @@ Run the focused lifecycle matrix separately. It uses only deterministic EventBus
 node --import tsx --test tests/pi-subagents-lifecycle.test.ts
 ```
 
-Expected result: three tests pass. Together they exercise explicit foreground execution, the default background return boundary, parallel delegated nodes, settlement after the initiating tool turn has returned, `/workflows`-equivalent stop ownership and correlated cancellation, delegated timeout and provider rejection, compatible extension reload handoff, journal replay, and resume.
+Expected result: four tests pass. Together they exercise explicit foreground execution, the default background return boundary, parallel delegated nodes, settlement after the initiating tool turn has returned, `/workflows`-equivalent stop ownership and correlated cancellation, delegated timeout and provider rejection, compatible extension reload handoff, journal replay, and resume.
 
 For an actual workflow, opt in per call:
 

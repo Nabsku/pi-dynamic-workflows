@@ -216,6 +216,7 @@ test("authoring and operator guidance preserve the delegated backend boundary", 
   assert.match(operator, /b77781ea926203b32af8fad439432e5cef2aae5f/);
   assert.match(operator, /offline two-agent native and delegated smoke/);
   assert.match(operator, /tests\/pi-subagents-lifecycle\.test\.ts/);
+  assert.match(operator, /Expected result: four tests pass\./);
 });
 
 test("operator guide bootstraps its literal offline verification commands in a disposable checkout", () => {
