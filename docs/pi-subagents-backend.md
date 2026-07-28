@@ -62,6 +62,8 @@ return await agent(`Review this evidence:\n${evidence}`, {
 
 The workflow itself may run in the foreground or background. `background` is a workflow-invocation delivery choice: the default `true` returns a run ID and later delivers the result, while `false` waits inline. Delegated child execution uses pi-subagents' foreground delegation bridge inside that workflow run; it does not create a second background-run authority.
 
+The background contract is therefore supported at the workflow layer, not forwarded as a child setting. The owning `WorkflowManager` retains the run, abort controller, journal, timeout policy, and result delivery while pi-subagents owns each correlated child until its terminal response. `/workflows stop <runId>` and `workflow_control stop` cancel the owning workflow, which propagates one correlated cancellation to every active delegated child.
+
 Observe the workflow through `/workflows`, `workflow_control status`, or the normal task panel. Delegated updates can supply bounded progress, resolved model, aggregate token total, session file, and output path. Missing token splits or cost remain unknown; the bridge does not invent them.
 
 ### Role and model precedence
@@ -73,7 +75,7 @@ Observe the workflow through `/workflows`, `workflow_control status`, or the nor
 
 ## Supported and unsupported behavior
 
-Supported: foreground v1 delegation within a workflow run; exact request correlation; concurrent requests; cancellation and timeout propagation; bounded progress/history; aggregate token totals when reported; role forwarding; explicit model routing; terminal diagnostics.
+Supported: foreground v1 delegation within either a foreground or background workflow run; exact request correlation; concurrent requests; cancellation and timeout propagation; extension reload while the same-process runtime is handed off; journaled workflow resume; bounded progress/history; aggregate token totals when reported; role forwarding; explicit model routing; terminal diagnostics.
 
 Unsupported: JSON Schema results; workflow shared-store child tools; workflow custom toolsets; delegated worktree isolation; automatic backend selection; backend fallback; a public released provider compatibility range; a second provider registry or EventBus discovery protocol; delegated token split/cost accounting when the provider does not report it; a second lifecycle authority.
 
@@ -89,6 +91,16 @@ Unsupported: JSON Schema results; workflow shared-store child tools; workflow cu
 | `timed_out`, `cancelled`, `interrupted`, budget/acceptance failure | The delegated lifecycle ended without a completed result | Fix the named limit or task, then rerun; the runtime does not switch to native automatically |
 
 To recover immediately without delegation, edit the workflow to omit `backend` (or set `backend: "native"`) and rerun it deliberately. This is an operator choice, not runtime fallback.
+
+## Provider-free lifecycle smoke
+
+Run the committed same-process bridge harness; it does not contact a model provider:
+
+```bash
+node --import tsx --test tests/pi-subagents-lifecycle.test.ts
+```
+
+The harness exercises inline foreground settlement, default background ownership with immediate parent continuation, parallel delegated nodes, workflow-control abort propagation, timeout, provider failure without fallback, extension reload, and journaled resume. It uses the exact pinned fork's real provider registration/parser with deterministic local executors. A passing harness proves adapter and workflow lifecycle semantics only; it is not evidence that a live model, credentials, or external side effect works.
 
 ## Architecture ownership and trust
 

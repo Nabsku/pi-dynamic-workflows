@@ -183,7 +183,8 @@ const AGENT_OPTIONS: OptionShape = {
     option("agentType", "string", true, null, ["must come from provided context"], "agent-types"),
     option("backend", '"native" | "pi-subagents"', true, '"native"', [
       "pi-subagents is opt-in and requires its public v1 bridge in the same Pi process",
-      "pi-subagents is foreground-only and does not support schema, workflow shared-store child tools, or workflow custom toolsets",
+      "the delegated child bridge is foreground-only, but its owning workflow supports foreground and background invocation",
+      "pi-subagents does not support schema, workflow shared-store child tools, or workflow custom toolsets",
     ]),
     option("timeoutMs", "number | null", true, "run timeout; null disables"),
     option("retries", "number", true, "run retry count", ["finite values are floored and clamped to 0..3"]),
