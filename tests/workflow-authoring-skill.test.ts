@@ -212,7 +212,7 @@ test("authoring and operator guidance preserve the delegated backend boundary", 
   }
   assert.match(operator, /stock `pi-subagents@0\.35\.1`/);
   assert.match(operator, /stock `pi-subagents@0\.37\.0`/);
-  assert.match(operator, /c4a45209ba2229b86df8b4e1e40ac1143609b78e/);
+  assert.match(operator, /b69cd0af014c3a86592bc35ac8fb4228b56af837/);
   assert.match(operator, /b77781ea926203b32af8fad439432e5cef2aae5f/);
   assert.match(operator, /offline two-agent native and delegated smoke/);
   assert.match(operator, /tests\/pi-subagents-lifecycle\.test\.ts/);
@@ -227,7 +227,7 @@ test("operator guide bootstraps its literal offline verification commands in a d
     operator,
     /git clone --no-checkout https:\/\/github\.com\/Nabsku\/pi-dynamic-workflows\.git "\$VERIFY_DIR"/,
   );
-  assert.match(operator, /git -C "\$VERIFY_DIR" checkout --detach c4a45209ba2229b86df8b4e1e40ac1143609b78e/);
+  assert.match(operator, /git -C "\$VERIFY_DIR" checkout --detach b69cd0af014c3a86592bc35ac8fb4228b56af837/);
   assert.match(operator, /cd "\$VERIFY_DIR"\nnpm ci/);
   assert.match(
     operator,
