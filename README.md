@@ -86,7 +86,9 @@ return await agent(
 
 ### Optional pi-subagents backend
 
-`backend: "pi-subagents"` is fork-only and uses the synchronous provider-discovery contract reviewed at [`Nabsku/pi-subagents@b77781ea926203b32af8fad439432e5cef2aae5f`](https://github.com/Nabsku/pi-subagents/commit/b77781ea926203b32af8fad439432e5cef2aae5f). Install and enable that exact commit separately when you use the opt-in backend. The workflow runtime verifies provider identity, package metadata, generation, protocol statuses, request fields, cancellation, and concurrency before reserving an agent slot; request acknowledgement remains a separate correlated lifecycle event. Published stock `pi-subagents` 0.35.1 and 0.37.0 fail closed because they do not expose provider discovery. No fork release or general peer-version range is implied.
+`backend: "pi-subagents"` is an explicit, fork-only opt-in. Native pi-dynamic-workflows agents remain the default; the runtime never selects this backend automatically and never falls back between backends. The only tested provider is [`Nabsku/pi-subagents@b77781ea926203b32af8fad439432e5cef2aae5f`](https://github.com/Nabsku/pi-subagents/commit/b77781ea926203b32af8fad439432e5cef2aae5f). Published stock `pi-subagents` 0.35.1 and 0.37.0 lack provider discovery and fail closed.
+
+Use the [pi-subagents backend operator guide](docs/pi-subagents-backend.md) for the exact install → verify → run → observe → recover path, compatibility matrix, deterministic provider-free smoke, role/model precedence, supported boundaries, and same-process EventBus trust model.
 
 ## Supported workflow capabilities
 

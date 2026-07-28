@@ -12,7 +12,7 @@ import {
   PI_SUBAGENTS_UPDATE_EVENT,
   PiSubagentsBackend,
 } from "../src/pi-subagents-backend.js";
-import { runWorkflow } from "../src/workflow.js";
+import { runWorkflow, type WorkflowAgentRunner } from "../src/workflow.js";
 
 const response = (requestId: string, extra: Record<string, unknown> = {}) => ({
   version: 1,
@@ -45,6 +45,31 @@ function listenerCountingBus() {
   registerSubagentDelegationProvider(bus, DEFAULT_SUBAGENT_DELEGATION_PROVIDER);
   return { bus, count: () => listeners };
 }
+
+test("two-agent native/delegated smoke is deterministic and provider-free", async () => {
+  const calls: Array<{ prompt: string; backend?: string }> = [];
+  const agent: WorkflowAgentRunner = {
+    preflight() {},
+    async run(prompt, options) {
+      calls.push({ prompt, backend: options?.backend });
+      return options?.backend === "pi-subagents" ? "delegated-ok" : "native-ok";
+    },
+  };
+
+  const result = await runWorkflow(
+    `export const meta = { name: 'backend_smoke', description: 'backend smoke' }
+const native = await agent('native task')
+const delegated = await agent('delegated task', { backend: 'pi-subagents' })
+return { native, delegated }`,
+    { cwd: "/repo", agent, persistLogs: false },
+  );
+
+  assert.equal(JSON.stringify(result.result), JSON.stringify({ native: "native-ok", delegated: "delegated-ok" }));
+  assert.deepEqual(calls, [
+    { prompt: "native task", backend: undefined },
+    { prompt: "delegated task", backend: "pi-subagents" },
+  ]);
+});
 
 test("pi-subagents backend sends only protocol v1 and maps start/update/usage/history/diagnostics", async () => {
   const { bus, count } = listenerCountingBus();

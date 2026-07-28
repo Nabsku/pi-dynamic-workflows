@@ -116,6 +116,25 @@ test("always-read skill guidance preserves identity and payload across downstrea
   );
 });
 
+test("backend onboarding documents the fail-closed operator and trust contract", () => {
+  const readme = readFileSync(join(ROOT, "README.md"), "utf8");
+  const operatorGuide = readFileSync(join(ROOT, "docs/pi-subagents-backend.md"), "utf8");
+  const authoringGuide = readFileSync(
+    join(ROOT, "skills/workflow-authoring/references/pi-subagents-backend.md"),
+    "utf8",
+  );
+  const combined = `${readme}\n${operatorGuide}\n${authoringGuide}`;
+
+  assert.match(combined, /b77781ea926203b32af8fad439432e5cef2aae5f/);
+  assert.match(operatorGuide, /Stock npm `pi-subagents@0\.35\.1`[\s\S]*Absent[\s\S]*Rejected/);
+  assert.match(operatorGuide, /Stock npm `pi-subagents@0\.37\.0`[\s\S]*Absent[\s\S]*Rejected/);
+  assert.match(operatorGuide, /two-agent native\/delegated smoke/);
+  assert.match(operatorGuide, /not authentication, authorization, user approval/i);
+  assert.match(operatorGuide, /no bus secret/i);
+  assert.match(combined, /no automatic (selection or )?fallback/i);
+  assert.match(authoringGuide, /native execution is the default/i);
+});
+
 test("one generated supported-capability table is fresh across skill, README, and website docs", () => {
   assert.deepEqual(CAPABILITY_TABLE_PUBLICATION_PATHS, [
     "skills/workflow-authoring/references/capabilities.md",

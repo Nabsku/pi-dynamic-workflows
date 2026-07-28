@@ -18,6 +18,7 @@ Read only what the task needs:
 - **Review:** use the [review checklist](references/review.md), plus only the matching [quality](references/quality-helpers.md) or [specialized](references/specialized-helpers.md) helper contracts.
 - **Debug:** use the [debugging map](references/debugging.md).
 - **Routing:** read [registry ownership](references/registry-ownership.md) before using `model`, `tier`, phase models, or `agentType`; use environment-specific names only when context supplies them.
+- **Delegated backend:** read [pi-subagents backend](references/pi-subagents-backend.md) before setting `backend: "pi-subagents"`; native execution is the default and delegation is an explicit fail-closed opt-in.
 - **Exact lookup or portability:** start with the generated [capability index](references/capabilities.md). Follow its exhaustive-facts pointer only for constraints or support boundaries. Use [versions](references/versions.md) when moving scripts between installations.
 
 ## Invariants

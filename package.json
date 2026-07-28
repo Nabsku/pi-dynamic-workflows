@@ -20,6 +20,7 @@
     "skills/",
     "src/",
     "assets/readme/",
+    "docs/pi-subagents-backend.md",
     "README.md"
   ],
   "scripts": {
