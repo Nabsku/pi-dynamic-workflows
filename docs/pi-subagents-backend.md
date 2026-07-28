@@ -7,7 +7,7 @@ This is the operator path for the fork-only `backend: "pi-subagents"` integratio
 Install the exact consumer and provider commits as Pi git packages:
 
 ```bash
-pi install git:github.com/Nabsku/pi-dynamic-workflows@947fec16ec856d1cf7ea932da332a7230149e768
+pi install git:github.com/Nabsku/pi-dynamic-workflows@ceb9ce78feb138dd09e88bac2dd61f37fd0a0f7a
 pi install git:github.com/Nabsku/pi-subagents@b77781ea926203b32af8fad439432e5cef2aae5f
 ```
 
@@ -27,7 +27,7 @@ The two hashes must be exactly the hashes above. If another source for either pa
 
 | Consumer | Provider | Result |
 | --- | --- | --- |
-| `Nabsku/pi-dynamic-workflows@947fec16ec856d1cf7ea932da332a7230149e768` | `Nabsku/pi-subagents@b77781ea926203b32af8fad439432e5cef2aae5f` | Tested experimental provider discovery and delegation v1 |
+| `Nabsku/pi-dynamic-workflows@ceb9ce78feb138dd09e88bac2dd61f37fd0a0f7a` | `Nabsku/pi-subagents@b77781ea926203b32af8fad439432e5cef2aae5f` | Tested experimental provider discovery and delegation v1, including the offline smoke below |
 | Same consumer | stock `pi-subagents@0.35.1` | Fails closed: no provider discovery |
 | Same consumer | stock `pi-subagents@0.37.0` | Fails closed: no provider discovery |
 | Public `@quintinshaw/pi-dynamic-workflows` releases | Any provider | No released support implied by this fork guide |
@@ -39,10 +39,11 @@ Package version `0.37.0` reported by the reviewed provider fork is package metad
 From the consumer checkout, run the offline native/delegated smoke. It executes one native fake agent and one delegated EventBus provider concurrently; it makes no model request and needs no paid credentials:
 
 ```bash
-node --import tsx --test --test-name-pattern="offline two-agent native and delegated smoke" tests/pi-subagents-backend.test.ts
+grep -Fq 'test("offline two-agent native and delegated smoke"' tests/pi-subagents-backend.test.ts && \
+  node --import tsx --test --test-name-pattern="offline two-agent native and delegated smoke" tests/pi-subagents-backend.test.ts
 ```
 
-Expected result: one matching test passes and the process exits zero. This proves the selected checkout's routing and lifecycle seam, not a live model/provider session.
+Expected result: the guard finds the named test, one matching test passes, and the process exits zero. If the named test is absent, the guard exits nonzero instead of allowing Node's test-name filter to report a false success. This proves the selected checkout's routing and lifecycle seam, not a live model/provider session.
 
 For an actual workflow, opt in per call:
 
