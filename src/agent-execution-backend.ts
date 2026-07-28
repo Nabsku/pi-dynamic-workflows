@@ -79,6 +79,7 @@ class PiSubagentsExecutionBackend implements AgentExecutionBackend {
       onUsage: options.onUsage,
       onHistory: options.onHistory,
       onDiagnostics: options.onDiagnostics,
+      modelPrecedence: options.modelPrecedence,
     })) as unknown;
   }
 

@@ -15,7 +15,7 @@ import {
   PI_SUBAGENTS_UPDATE_EVENT,
   PiSubagentsBackend,
 } from "../src/pi-subagents-backend.js";
-import { runWorkflow, type WorkflowAgentRunner } from "../src/workflow.js";
+import { type JournalEntry, runWorkflow, type WorkflowAgentRunner } from "../src/workflow.js";
 
 const response = (requestId: string, extra: Record<string, unknown> = {}) => ({
   version: 1,
@@ -833,6 +833,7 @@ test("WorkflowAgent delegates an explicit role without overriding its configured
 test("workflow forwards phase and metadata model routes to delegated calls", async () => {
   const bus = reviewedBus();
   const requests: any[] = [];
+  const journals: JournalEntry[] = [];
   bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
     requests.push(raw);
     bus.emit(PI_SUBAGENTS_STARTED_EVENT, { version: 1, requestId: raw.requestId });
@@ -858,7 +859,13 @@ await agent('phase task', { backend: 'pi-subagents', agentType: 'reviewer' })
 phase('Metadata route')
 await agent('metadata task', { backend: 'pi-subagents', agentType: 'reviewer' })
 return {}`,
-    { cwd: "/repo", modelRegistry, piSubagentsEvents: bus, persistLogs: false },
+    {
+      cwd: "/repo",
+      modelRegistry,
+      piSubagentsEvents: bus,
+      persistLogs: false,
+      onAgentJournal: (entry) => journals.push(entry),
+    },
   );
 
   assert.deepEqual(
@@ -867,5 +874,9 @@ return {}`,
       { agent: "reviewer", model: "route/phase" },
       { agent: "reviewer", model: "route/metadata" },
     ],
+  );
+  assert.deepEqual(
+    journals.map((entry) => entry.diagnostics?.provider.modelPrecedence),
+    ["tier-or-phase", "tier-or-phase"],
   );
 });
