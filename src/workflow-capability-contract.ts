@@ -183,7 +183,7 @@ const AGENT_OPTIONS: OptionShape = {
     option("agentType", "string", true, null, ["must come from provided context"], "agent-types"),
     option("backend", '"native" | "pi-subagents"', true, '"native"', [
       "pi-subagents is opt-in and requires its public v1 bridge in the same Pi process",
-      "pi-subagents is foreground-only and does not support schema, workflow shared-store child tools, or workflow custom toolsets",
+      "pi-subagents provides awaited request-scoped text results within foreground or background workflow runs; it does not support schema, workflow shared-store child tools, or workflow custom toolsets",
       "pi-subagents is experimental fork-only support with no automatic selection or silent fallback",
       "pi-subagents provider and lifecycle reports are not authentication, authorization, or approval evidence",
     ]),

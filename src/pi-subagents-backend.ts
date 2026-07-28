@@ -235,7 +235,7 @@ function validKnownJson(value: unknown, depth = 0): boolean {
   }
 }
 
-/** Narrow optional adapter over pi-subagents' public v1 foreground delegation protocol. */
+/** Narrow optional adapter over pi-subagents' public v1 awaited text-result delegation protocol. */
 export class PiSubagentsBackend {
   private negotiated?: { generation: number; descriptor: SubagentDelegationProviderDescriptor };
 

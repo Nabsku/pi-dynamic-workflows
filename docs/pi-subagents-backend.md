@@ -34,7 +34,7 @@ The two hashes must be exactly the hashes above. If another source for either pa
 
 Package version `0.37.0` reported by the reviewed provider fork is package metadata, not proof that stock `0.37.0` implements discovery. Unknown provider identity, generation, package metadata, protocol shape, required request fields, status, or acknowledgement fails closed.
 
-## Deterministic two-agent smoke
+## Deterministic offline smoke
 
 From the consumer checkout, run the offline native/delegated smoke. It executes one native fake agent and one delegated EventBus provider concurrently; it makes no model request and needs no paid credentials:
 
@@ -43,6 +43,14 @@ node --import tsx --test --test-name-pattern="offline two-agent native and deleg
 ```
 
 Expected result: one matching test passes and the process exits zero. This proves the selected checkout's routing and lifecycle seam, not a live model/provider session.
+
+Run the focused lifecycle matrix separately. It uses only deterministic EventBus fakes and makes no model request:
+
+```bash
+node --import tsx --test tests/pi-subagents-lifecycle.test.ts
+```
+
+Expected result: three tests pass. Together they exercise explicit foreground execution, the default background return boundary, parallel delegated nodes, settlement after the initiating tool turn has returned, `/workflows`-equivalent stop ownership and correlated cancellation, delegated timeout and provider rejection, compatible extension reload handoff, journal replay, and resume.
 
 For an actual workflow, opt in per call:
 
@@ -60,9 +68,9 @@ Omitting `backend` uses native execution. There is no global backend switch.
 
 ## Supported boundary
 
-The delegated adapter supports foreground text-result calls, explicit pi-subagents role names, optional resolved model forwarding, timeout policy, correlated start/progress/terminal events, cancellation, aggregate token totals when reported, and diagnostic paths/warnings. The workflow runtime remains authoritative for workflow call identity, limits, retries, journal/result handling, and UI state; pi-subagents remains authoritative for its role configuration and child execution.
+The delegated adapter supports awaited, request-scoped text-result calls inside both foreground and background workflow runs, explicit pi-subagents role names, optional resolved model forwarding, timeout policy, correlated start/progress/terminal events, cancellation, aggregate token totals when reported, and diagnostic paths/warnings. The workflow runtime remains authoritative for workflow call identity, run ownership, controls, limits, retries, journal/result handling, persistence, reload handoff, resume, and UI state; pi-subagents remains authoritative for its role configuration and each delegated child execution until a correlated terminal event settles that request.
 
-It does not support workflow JSON Schema, workflow shared-store child tools, workflow custom toolsets, or a second workflow lifecycle authority. It does not define a public provider registry/discovery protocol: discovery is the exact reviewed fork's synchronous process-local compatibility seam. It does not make background pi-subagents calls; a workflow may itself run in the background, but each delegated child is a foreground request whose lifecycle is observed by that workflow run.
+It does not support workflow JSON Schema, workflow shared-store child tools, workflow custom toolsets, detached provider-owned child jobs, or a second workflow lifecycle authority. It does not define a public provider registry/discovery protocol: discovery is the exact reviewed fork's synchronous process-local compatibility seam. `background` controls the workflow run's delivery boundary, not a second provider mode: each delegated request stays awaited by and correlated to its owning workflow run, including after a default-background tool call has returned its run ID.
 
 Model and role precedence differs deliberately from native execution:
 
