@@ -410,6 +410,8 @@ test(
     // The returned text advertises the revise/iterate path.
     const text = res.content?.[0]?.type === "text" ? res.content[0].text : "";
     assert.match(text, /resumeFromRunId/, "background text tells the model how to iterate");
+    assert.match(text, /replay-safe native non-worktree agent\(\) calls replay from cache/i);
+    assert.match(text, /delegated and worktree-isolated calls rerun live/i);
   }),
 );
 
@@ -457,6 +459,8 @@ return { a, b }`;
     assert.equal(details.resumedFrom, runId);
     const text = res.content?.[0]?.type === "text" ? res.content[0].text : "";
     assert.match(text, new RegExp(`resumed from run ${runId}`), "text names the resumed run");
+    assert.match(text, /replay-safe native non-worktree agent\(\) calls replay/i);
+    assert.match(text, /delegated and worktree-isolated calls rerun live/i);
 
     await new Promise((r) => setTimeout(r, 80));
     const finalRun = manager.getRun(runId);

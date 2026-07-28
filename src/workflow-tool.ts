@@ -395,12 +395,13 @@ export function backgroundStartedText(name: string, runId: string): string {
 /**
  * One-line hint telling the model it can iterate on a finished/running run by
  * resuming it with an edited script instead of re-running the whole workflow.
- * Unchanged agent() calls replay from the journal (cache); only edited/new ones
- * re-run. Omitted when there is no runId to reference.
+ * Unchanged replay-safe native non-worktree agent() calls replay from the
+ * journal (cache); delegated and worktree-isolated calls rerun live. Omitted
+ * when there is no runId to reference.
  */
 export function reviseHint(runId: string | undefined): string {
   if (!runId) return "";
-  return `To revise without re-running everything: re-call workflow with resumeFromRunId="${runId}" and an edited script — unchanged agent() calls replay from cache, only edited/new ones re-run.`;
+  return `To revise without re-running everything: re-call workflow with resumeFromRunId="${runId}" and an edited script — unchanged replay-safe native non-worktree agent() calls replay from cache; delegated and worktree-isolated calls rerun live; edited/new calls re-run.`;
 }
 
 /**
@@ -410,8 +411,9 @@ export function reviseHint(runId: string | undefined): string {
 export function resumedText(name: string, runId: string): string {
   return [
     `Workflow "${name}" resumed from run ${runId} with your edited script.`,
-    "Unchanged agent() calls replay from that run's journal (cache); the first",
-    "edited or newly inserted agent() call — and everything after it — re-runs live.",
+    "Unchanged replay-safe native non-worktree agent() calls replay from that run's",
+    "journal (cache). Delegated and worktree-isolated calls rerun live. The first edited",
+    "or newly inserted call — and everything after it — re-runs live.",
     "It runs in the background; the result is delivered back here when it finishes,",
     "and the conversation continues automatically. The user can wait or keep working.",
     `Track or cancel it with /workflows status ${runId} or /workflows stop ${runId}.`,
