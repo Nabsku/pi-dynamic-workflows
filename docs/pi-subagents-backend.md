@@ -7,7 +7,7 @@ This is the operator path for the fork-only `backend: "pi-subagents"` integratio
 Install the exact consumer and provider commits as Pi git packages:
 
 ```bash
-pi install git:github.com/Nabsku/pi-dynamic-workflows@a93155f4fed9cc99f778ef5daeda4bb900b6932e
+pi install git:github.com/Nabsku/pi-dynamic-workflows@c20ad529ee7445c72effbf33358756ba015dcb21
 pi install git:github.com/Nabsku/pi-subagents@b77781ea926203b32af8fad439432e5cef2aae5f
 ```
 
@@ -27,7 +27,7 @@ The two hashes must be exactly the hashes above. If another source for either pa
 
 | Consumer | Provider | Result |
 | --- | --- | --- |
-| `Nabsku/pi-dynamic-workflows@a93155f4fed9cc99f778ef5daeda4bb900b6932e` | `Nabsku/pi-subagents@b77781ea926203b32af8fad439432e5cef2aae5f` | Tested experimental provider discovery and delegation v1 |
+| `Nabsku/pi-dynamic-workflows@c20ad529ee7445c72effbf33358756ba015dcb21` | `Nabsku/pi-subagents@b77781ea926203b32af8fad439432e5cef2aae5f` | Tested experimental provider discovery, delegation v1, and request-scoped lifecycle semantics |
 | Same consumer | stock `pi-subagents@0.35.1` | Fails closed: no provider discovery |
 | Same consumer | stock `pi-subagents@0.37.0` | Fails closed: no provider discovery |
 | Public `@quintinshaw/pi-dynamic-workflows` releases | Any provider | No released support implied by this fork guide |

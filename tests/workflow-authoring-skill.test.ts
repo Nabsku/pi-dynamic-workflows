@@ -212,9 +212,10 @@ test("authoring and operator guidance preserve the delegated backend boundary", 
   }
   assert.match(operator, /stock `pi-subagents@0\.35\.1`/);
   assert.match(operator, /stock `pi-subagents@0\.37\.0`/);
-  assert.match(operator, /a93155f4fed9cc99f778ef5daeda4bb900b6932e/);
+  assert.match(operator, /c20ad529ee7445c72effbf33358756ba015dcb21/);
   assert.match(operator, /b77781ea926203b32af8fad439432e5cef2aae5f/);
   assert.match(operator, /offline two-agent native and delegated smoke/);
+  assert.match(operator, /tests\/pi-subagents-lifecycle\.test\.ts/);
 });
 
 test("generated facts cover the lifecycle constraints taught by the skill", () => {
