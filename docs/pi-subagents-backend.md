@@ -7,7 +7,7 @@ This is the operator path for the fork-only `backend: "pi-subagents"` integratio
 Install the exact consumer and provider commits as Pi git packages:
 
 ```bash
-pi install git:github.com/Nabsku/pi-dynamic-workflows@c20ad529ee7445c72effbf33358756ba015dcb21
+pi install git:github.com/Nabsku/pi-dynamic-workflows@c4a45209ba2229b86df8b4e1e40ac1143609b78e
 pi install git:github.com/Nabsku/pi-subagents@b77781ea926203b32af8fad439432e5cef2aae5f
 ```
 
@@ -27,7 +27,7 @@ The two hashes must be exactly the hashes above. If another source for either pa
 
 | Consumer | Provider | Result |
 | --- | --- | --- |
-| `Nabsku/pi-dynamic-workflows@c20ad529ee7445c72effbf33358756ba015dcb21` | `Nabsku/pi-subagents@b77781ea926203b32af8fad439432e5cef2aae5f` | Tested experimental provider discovery, delegation v1, and request-scoped lifecycle semantics |
+| `Nabsku/pi-dynamic-workflows@c4a45209ba2229b86df8b4e1e40ac1143609b78e` | `Nabsku/pi-subagents@b77781ea926203b32af8fad439432e5cef2aae5f` | Tested experimental provider discovery, delegation v1, request-scoped lifecycle semantics, and truthful delegated model diagnostics |
 | Same consumer | stock `pi-subagents@0.35.1` | Fails closed: no provider discovery |
 | Same consumer | stock `pi-subagents@0.37.0` | Fails closed: no provider discovery |
 | Public `@quintinshaw/pi-dynamic-workflows` releases | Any provider | No released support implied by this fork guide |
@@ -42,7 +42,7 @@ Package version `0.37.0` reported by the reviewed provider fork is package metad
 VERIFY_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pi-dynamic-workflows-verify.XXXXXX")"
 trap 'rm -rf -- "$VERIFY_DIR"' EXIT
 git clone --no-checkout https://github.com/Nabsku/pi-dynamic-workflows.git "$VERIFY_DIR"
-git -C "$VERIFY_DIR" checkout --detach c20ad529ee7445c72effbf33358756ba015dcb21
+git -C "$VERIFY_DIR" checkout --detach c4a45209ba2229b86df8b4e1e40ac1143609b78e
 cd "$VERIFY_DIR"
 npm ci
 ```
