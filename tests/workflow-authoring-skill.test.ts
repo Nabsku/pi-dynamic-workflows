@@ -218,6 +218,24 @@ test("authoring and operator guidance preserve the delegated backend boundary", 
   assert.match(operator, /tests\/pi-subagents-lifecycle\.test\.ts/);
 });
 
+test("operator guide bootstraps its literal offline verification commands in a disposable checkout", () => {
+  const operator = readFileSync(join(ROOT, "docs/pi-subagents-backend.md"), "utf8");
+
+  assert.match(operator, /VERIFY_DIR=.*mktemp/);
+  assert.match(
+    operator,
+    /git clone --no-checkout https:\/\/github\.com\/Nabsku\/pi-dynamic-workflows\.git "\$VERIFY_DIR"/,
+  );
+  assert.match(operator, /git -C "\$VERIFY_DIR" checkout --detach c20ad529ee7445c72effbf33358756ba015dcb21/);
+  assert.match(operator, /cd "\$VERIFY_DIR"\nnpm ci/);
+  assert.match(
+    operator,
+    /node --import tsx --test --test-name-pattern="offline two-agent native and delegated smoke" tests\/pi-subagents-backend\.test\.ts/,
+  );
+  assert.match(operator, /node --import tsx --test tests\/pi-subagents-lifecycle\.test\.ts/);
+  assert.match(operator, /trap 'rm -rf -- "\$VERIFY_DIR"' EXIT/);
+});
+
 test("generated facts cover the lifecycle constraints taught by the skill", () => {
   const facts = new Map(WORKFLOW_CAPABILITY_CONTRACT.projectStaticReferenceFacts().map((fact) => [fact.id, fact]));
   const exactFacts = [

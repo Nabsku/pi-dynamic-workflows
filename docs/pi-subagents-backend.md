@@ -36,7 +36,20 @@ Package version `0.37.0` reported by the reviewed provider fork is package metad
 
 ## Deterministic offline smoke
 
-From the consumer checkout, run the offline native/delegated smoke. It executes one native fake agent and one delegated EventBus provider concurrently; it makes no model request and needs no paid credentials:
+`pi install` installs runtime dependencies, not the test-only dependencies used by these checks. Bootstrap a disposable verification checkout at the exact reviewed consumer commit before running them:
+
+```bash
+VERIFY_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pi-dynamic-workflows-verify.XXXXXX")"
+trap 'rm -rf -- "$VERIFY_DIR"' EXIT
+git clone --no-checkout https://github.com/Nabsku/pi-dynamic-workflows.git "$VERIFY_DIR"
+git -C "$VERIFY_DIR" checkout --detach c20ad529ee7445c72effbf33358756ba015dcb21
+cd "$VERIFY_DIR"
+npm ci
+```
+
+The checkout is removed when the shell exits. Do not run these test commands directly from Pi's managed package checkout unless its development dependencies were installed separately.
+
+From the disposable consumer checkout, run the offline native/delegated smoke. It executes one native fake agent and one delegated EventBus provider concurrently; it makes no model request and needs no paid credentials:
 
 ```bash
 node --import tsx --test --test-name-pattern="offline two-agent native and delegated smoke" tests/pi-subagents-backend.test.ts
