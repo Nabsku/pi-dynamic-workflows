@@ -186,6 +186,8 @@ const AGENT_OPTIONS: OptionShape = {
       "the delegated child bridge is foreground-only, but its owning workflow supports foreground and background invocation",
       "pi-subagents is limited to analyst, researcher, reviewer, and reporter roles; mutation and worktree isolation fail closed",
       "pi-subagents does not support schema, workflow shared-store child tools, or workflow custom toolsets",
+      "pi-subagents support is experimental and fork-only, with no automatic selection or silent fallback",
+      "same-process provider and lifecycle reports are not authentication, authorization, approval, or permission evidence",
     ]),
     option("timeoutMs", "number | null", true, "run timeout; null disables"),
     option("retries", "number", true, "run retry count", ["finite values are floored and clamped to 0..3"]),

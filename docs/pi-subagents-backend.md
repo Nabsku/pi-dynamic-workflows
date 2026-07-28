@@ -2,28 +2,35 @@
 
 The `pi-subagents` backend is optional and fork-only. Native pi-dynamic-workflows execution remains the default. A workflow uses delegation only when that individual `agent()` call sets `backend: "pi-subagents"`; there is no automatic selection or fallback.
 
-## Install and enable the reviewed provider
+## Install and enable the reviewed pair
 
-Install both extensions into the same Pi configuration. Pin the provider to the exact reviewed commit—do not substitute a stock release or a moving branch:
+Install the exact reviewed consumer milestone and provider commit into the same Pi configuration. Do not substitute the public consumer package, a stock provider release, or a moving branch:
 
 ```bash
-pi install npm:@quintinshaw/pi-dynamic-workflows
-pi install 'git:https://github.com/Nabsku/pi-subagents.git#b77781ea926203b32af8fad439432e5cef2aae5f'
+pi install git:github.com/Nabsku/pi-dynamic-workflows@83a062cdffe2912837219eba1a37b1a9064ebca0
+pi install git:github.com/Nabsku/pi-subagents@b77781ea926203b32af8fad439432e5cef2aae5f
 pi list
 ```
 
-`pi list` must show both sources. Run `/reload` in Pi after installation. The two extensions must load in the same Pi process because the adapter uses that process's Pi EventBus.
+`pi list` must show both sources. Verify the checked-out commits before running:
+
+```bash
+git -C ~/.pi/agent/git/github.com/Nabsku/pi-dynamic-workflows rev-parse HEAD
+git -C ~/.pi/agent/git/github.com/Nabsku/pi-subagents rev-parse HEAD
+```
+
+The hashes must be exactly the two hashes above. If another source for either package is already enabled, remove or filter the duplicate rather than loading two implementations of the same extension or tool. Run `/reload` in Pi after installation. The two extensions must load in the same Pi process because the adapter uses that process's Pi EventBus.
 
 For a project-local installation, add `--local` to both `pi install` commands and run them from the project root. Do not install one globally and one project-locally unless `pi list` for that project proves both are active together.
 
 ## Compatibility
 
-| pi-subagents source | Provider discovery | Result |
+| Consumer | Provider discovery | Result |
 | --- | --- | --- |
-| `Nabsku/pi-subagents` commit `b77781ea926203b32af8fad439432e5cef2aae5f` | Reviewed synchronous provider descriptor | Supported for the boundaries below |
-| Stock npm `pi-subagents@0.35.1` | Absent | Rejected before an agent slot is reserved |
-| Stock npm `pi-subagents@0.37.0` | Absent | Rejected before an agent slot is reserved |
-| Other commits, releases, or package metadata | Not reviewed | Fail closed; no compatibility range is promised |
+| `Nabsku/pi-dynamic-workflows@83a062cdffe2912837219eba1a37b1a9064ebca0` with `Nabsku/pi-subagents@b77781ea926203b32af8fad439432e5cef2aae5f` | Reviewed synchronous provider descriptor | Supported for the boundaries below, including the offline smoke |
+| Same consumer with stock npm `pi-subagents@0.35.1` | Absent | Rejected before an agent slot is reserved |
+| Same consumer with stock npm `pi-subagents@0.37.0` | Absent | Rejected before an agent slot is reserved |
+| Public `@quintinshaw/pi-dynamic-workflows`, other commits, releases, or package metadata | Not reviewed | Fail closed; no released compatibility range is promised |
 
 The workflow runtime verifies provider identity, package name/version, generation, protocol version and statuses, request fields, cancellation, and concurrency before reservation. A later correlated `started` event acknowledges one request; discovery and acknowledgement are separate checks.
 
@@ -32,12 +39,13 @@ The workflow runtime verifies provider identity, package name/version, generatio
 From a checkout of this repository, run the native/delegated two-agent routing smoke and release-conformance suite. These tests use deterministic fake agents and an in-process bridge; they make no paid or live model requests:
 
 ```bash
-node --import tsx --test \
+grep -Fq 'test("two-agent native/delegated smoke is deterministic and provider-free"' tests/pi-subagents-backend.test.ts && \
+  node --import tsx --test \
   --test-name-pattern='two-agent native/delegated smoke|fails closed without provider discovery|exact reviewed fork bridge' \
   tests/pi-subagents-backend.test.ts tests/pi-subagents-release-conformance.test.ts
 ```
 
-A passing run executes exactly one native call and one explicitly delegated call, proves stock 0.35.1/0.37.0 rejection, and exercises the reviewed provider descriptor. It verifies repository compatibility, not the authentication or availability of any live model.
+A passing run executes exactly one native call and one explicitly delegated call, proves stock 0.35.1/0.37.0 rejection, and exercises the reviewed provider descriptor. If the named smoke is absent, the guard exits nonzero instead of allowing Node's test-name filter to report a false success. It verifies repository compatibility, not the authentication or availability of any live model.
 
 ## Run and observe
 

@@ -126,9 +126,12 @@ test("backend onboarding documents the fail-closed operator and trust contract",
   const combined = `${readme}\n${operatorGuide}\n${authoringGuide}`;
 
   assert.match(combined, /b77781ea926203b32af8fad439432e5cef2aae5f/);
-  assert.match(operatorGuide, /Stock npm `pi-subagents@0\.35\.1`[\s\S]*Absent[\s\S]*Rejected/);
-  assert.match(operatorGuide, /Stock npm `pi-subagents@0\.37\.0`[\s\S]*Absent[\s\S]*Rejected/);
+  assert.match(combined, /83a062cdffe2912837219eba1a37b1a9064ebca0/);
+  assert.match(operatorGuide, /stock npm `pi-subagents@0\.35\.1`[\s\S]*Absent[\s\S]*Rejected/i);
+  assert.match(operatorGuide, /stock npm `pi-subagents@0\.37\.0`[\s\S]*Absent[\s\S]*Rejected/i);
   assert.match(operatorGuide, /two-agent native\/delegated smoke/);
+  assert.match(operatorGuide, /grep -Fq[\s\S]*test-name-pattern/);
+  assert.match(operatorGuide, /guard exits nonzero/i);
   assert.match(operatorGuide, /not authentication, authorization, user approval/i);
   assert.match(operatorGuide, /no bus secret/i);
   assert.match(combined, /no automatic (selection or )?fallback/i);
