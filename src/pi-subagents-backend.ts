@@ -209,6 +209,31 @@ function safelyTargets(raw: unknown, requestId: string): boolean {
   }
 }
 
+function safelyTargetedRequestId(raw: unknown): string | undefined {
+  try {
+    if (raw === null || typeof raw !== "object") return undefined;
+    const descriptors = Object.getOwnPropertyDescriptors(raw);
+    const version = descriptors.version;
+    const id = descriptors.requestId;
+    if (
+      !version ||
+      !("value" in version) ||
+      version.get ||
+      version.set ||
+      version.value !== PI_SUBAGENTS_PROTOCOL_VERSION ||
+      !id ||
+      !("value" in id) ||
+      id.get ||
+      id.set ||
+      typeof id.value !== "string"
+    )
+      return undefined;
+    return id.value;
+  } catch {
+    return undefined;
+  }
+}
+
 function validOptionalString(value: unknown, max = MAX_PROTOCOL_STRING_CHARS): boolean {
   return value === undefined || (typeof value === "string" && value.length <= max);
 }
@@ -284,9 +309,57 @@ function recoveryHint(status: SubagentDelegationStatus): string | undefined {
   return "Inspect the sanitized bridge error and provider run reference before retrying.";
 }
 
+interface DelegatedRequestRoute {
+  started(raw: unknown): void;
+  update(raw: unknown): void;
+  response(raw: unknown): void;
+}
+
+/** One EventBus subscription set per provider generation, with O(1) request correlation. */
+class DelegatedEventRouter {
+  private readonly routes = new Map<string, DelegatedRequestRoute>();
+  private readonly off: Array<() => void>;
+
+  constructor(
+    events: EventBus,
+    private readonly onEmpty: () => void,
+  ) {
+    const dispatch = (kind: keyof DelegatedRequestRoute, raw: unknown) => {
+      const requestId = safelyTargetedRequestId(raw);
+      if (requestId === undefined) return;
+      this.routes.get(requestId)?.[kind](raw);
+    };
+    this.off = [
+      events.on(PI_SUBAGENTS_STARTED_EVENT, (raw) => dispatch("started", raw)),
+      events.on(PI_SUBAGENTS_UPDATE_EVENT, (raw) => dispatch("update", raw)),
+      events.on(PI_SUBAGENTS_RESPONSE_EVENT, (raw) => dispatch("response", raw)),
+    ];
+  }
+
+  add(requestId: string, route: DelegatedRequestRoute): () => void {
+    this.routes.set(requestId, route);
+    let removed = false;
+    return () => {
+      if (removed) return;
+      removed = true;
+      this.routes.delete(requestId);
+      if (this.routes.size === 0) this.onEmpty();
+    };
+  }
+
+  dispose(): void {
+    for (const off of this.off.splice(0)) off();
+    this.routes.clear();
+  }
+}
+
 /** Narrow optional adapter over pi-subagents' public v1 awaited text-result delegation protocol. */
 export class PiSubagentsBackend {
-  private negotiated?: { generation: number; descriptor: SubagentDelegationProviderDescriptor };
+  private negotiated?: {
+    generation: number;
+    descriptor: SubagentDelegationProviderDescriptor;
+  };
+  private readonly routers = new Map<number, DelegatedEventRouter>();
 
   constructor(
     private readonly events: EventBus | undefined,
@@ -382,7 +455,10 @@ export class PiSubagentsBackend {
         if (cancelEmitted) return;
         cancelEmitted = true;
         try {
-          events.emit(PI_SUBAGENTS_CANCEL_EVENT, { version: PI_SUBAGENTS_PROTOCOL_VERSION, requestId });
+          events.emit(PI_SUBAGENTS_CANCEL_EVENT, {
+            version: PI_SUBAGENTS_PROTOCOL_VERSION,
+            requestId,
+          });
         } catch {
           // Cancellation transport is best-effort. Local settlement must win.
         }
@@ -405,9 +481,13 @@ export class PiSubagentsBackend {
       const appendHistory = (text: string, progress = false) => {
         if (!text.trim() || history.at(-1)?.text === text) return;
         if (progress) {
-          if (progressChars + text.length > MAX_PROGRESS_CHARS) return;
+          while (history.length >= MAX_PROGRESS_HISTORY || progressChars + text.length > MAX_PROGRESS_CHARS) {
+            const removed = history.shift();
+            if (!removed) break;
+            progressChars = Math.max(0, progressChars - removed.text.length);
+          }
+          if (text.length > MAX_PROGRESS_CHARS) return;
           progressChars += text.length;
-          while (history.length >= MAX_PROGRESS_HISTORY) history.shift();
         }
         history.push({ role: "assistant", kind: "text", text });
         options.onHistory?.([...history]);
@@ -415,188 +495,210 @@ export class PiSubagentsBackend {
       const malformed = (kind: string) =>
         fail(`pi-subagents returned malformed protocol ${kind}`, WorkflowErrorCode.AGENT_EXECUTION_ERROR, false);
 
+      let router = this.routers.get(descriptor.generation);
+      if (!router) {
+        router = new DelegatedEventRouter(events, () => {
+          if (this.routers.get(descriptor.generation) !== router) return;
+          router?.dispose();
+          this.routers.delete(descriptor.generation);
+        });
+        this.routers.set(descriptor.generation, router);
+      }
       cleanups.push(
-        events.on(PI_SUBAGENTS_STARTED_EVENT, (raw) => {
-          const started = ownDataRecord(raw, STARTED_FIELDS);
-          if (!started) {
-            if (safelyTargets(raw, requestId)) malformed("started event");
-            return;
-          }
-          if (!validBase(started, requestId)) return;
-          acknowledgeBridge();
-        }),
-        events.on(PI_SUBAGENTS_UPDATE_EVENT, (raw) => {
-          const update = ownDataRecord(raw, UPDATE_FIELDS);
-          if (!update) {
-            if (safelyTargets(raw, requestId)) malformed("update");
-            return;
-          }
-          if (!validBase(update, requestId)) return;
-          const rawLines = update.recentOutputLines;
-          const lines = rawLines === undefined ? undefined : ownArrayValues(rawLines, MAX_PROGRESS_LINES);
-          const recentTools = update.recentTools;
-          if (
-            !validOptionalString(update.currentTool) ||
-            !validOptionalString(update.currentToolArgs, MAX_PROGRESS_LINE_CHARS) ||
-            !validOptionalString(update.recentOutput, MAX_PROGRESS_LINE_CHARS) ||
-            !validOptionalString(update.model) ||
-            !validOptionalNumber(update.toolCount) ||
-            !validOptionalNumber(update.durationMs) ||
-            !validOptionalNumber(update.tokens) ||
-            (rawLines !== undefined &&
-              !(lines?.every((line) => typeof line === "string" && line.length <= MAX_PROGRESS_LINE_CHARS) ?? false)) ||
-            (recentTools !== undefined && !validKnownJson(recentTools))
-          ) {
-            malformed("update");
-            return;
-          }
-          if (typeof update.model === "string") options.onModelResolved?.(update.model);
-          const text =
-            typeof update.recentOutput === "string"
-              ? update.recentOutput
-              : lines
-                ? lines.join("\n")
-                : typeof update.currentTool === "string"
-                  ? `Running ${update.currentTool}`
-                  : "";
-          appendHistory(text, true);
-        }),
-        events.on(PI_SUBAGENTS_RESPONSE_EVENT, (raw) => {
-          const terminal = ownDataRecord(raw, RESPONSE_FIELDS);
-          if (!terminal) {
-            if (safelyTargets(raw, requestId)) malformed("response");
-            return;
-          }
-          if (!validBase(terminal, requestId)) return;
-          if (typeof terminal.output === "string" && terminal.output.length > MAX_FINAL_OUTPUT_CHARS) {
-            fail(
-              `pi-subagents final output exceeds ${MAX_FINAL_OUTPUT_CHARS} characters`,
-              WorkflowErrorCode.AGENT_EXECUTION_ERROR,
-              false,
-            );
-            return;
-          }
-          if (terminal.output !== undefined && typeof terminal.output !== "string") {
-            malformed("response");
-            return;
-          }
-          const rawWarnings = terminal.warnings;
-          const warnings = rawWarnings === undefined ? undefined : ownArrayValues(rawWarnings, MAX_WARNING_COUNT);
-          if (
-            typeof terminal.status !== "string" ||
-            !validOptionalString(terminal.error, MAX_PROGRESS_LINE_CHARS) ||
-            !validOptionalString(terminal.runId) ||
-            !validOptionalString(terminal.agent) ||
-            !validOptionalString(terminal.model) ||
-            !validOptionalString(terminal.outputPath, MAX_PROGRESS_LINE_CHARS) ||
-            !validOptionalString(terminal.sessionFile, MAX_PROGRESS_LINE_CHARS) ||
-            !validOptionalNumber(terminal.childIndex) ||
-            !validOptionalNumber(terminal.turns) ||
-            !validOptionalNumber(terminal.toolCount) ||
-            !validOptionalNumber(terminal.durationMs) ||
-            !validOptionalNumber(terminal.tokens) ||
-            (terminal.exitCode !== undefined &&
-              (typeof terminal.exitCode !== "number" || !Number.isInteger(terminal.exitCode))) ||
-            !validKnownJson(terminal.execution) ||
-            !validKnownJson(terminal.acceptance) ||
-            !validKnownJson(terminal.review) ||
-            !validKnownJson(terminal.effects) ||
-            (rawWarnings !== undefined &&
-              !(
-                warnings?.every((item) => typeof item === "string" && item.length <= MAX_PROTOCOL_STRING_CHARS) ?? false
-              ))
-          ) {
-            malformed("response");
-            return;
-          }
-
-          if (!isTerminalStatus(terminal.status)) {
-            fail(
-              `pi-subagents returned unsupported protocol status ${JSON.stringify(terminal.status)}`,
-              WorkflowErrorCode.AGENT_EXECUTION_ERROR,
-              false,
-            );
-            return;
-          }
-          acknowledgeBridge();
-          const status = terminal.status;
-          const wireError = typeof terminal.error === "string" ? sanitizeDiagnosticText(terminal.error) : undefined;
-          const effectiveModel = typeof terminal.model === "string" ? terminal.model : undefined;
-          const usage =
-            typeof terminal.tokens === "number"
-              ? { total: terminal.tokens, provenance: "pi-subagents-v1" as const }
-              : undefined;
-          const details: PiSubagentsDiagnosticDetails = {
-            backend: "pi-subagents",
-            providerStatus: status,
-            providerId: PI_SUBAGENTS_PROVIDER_ID,
-            providerGeneration: descriptor.generation,
-            protocol: PI_SUBAGENTS_PROTOCOL_VERSION,
-            role: options.agentType ?? "delegate",
-            roleSemantics: "pi-subagents-provider-role",
-            ...(options.model ? { requestedModel: options.model } : {}),
-            ...(effectiveModel ? { effectiveModel } : {}),
-            modelPrecedence: options.modelPrecedence ?? (options.model ? "explicit" : "session"),
-            ...(usage ? { usage } : {}),
-            ...(typeof terminal.runId === "string" ? { runId: terminal.runId } : {}),
-            ...(typeof terminal.outputPath === "string" ? { outputPath: terminal.outputPath } : {}),
-            ...(typeof terminal.sessionFile === "string" ? { sessionFile: terminal.sessionFile } : {}),
-            ...(warnings
-              ? { warnings: (warnings as string[]).slice(0, MAX_PERSISTED_WARNING_COUNT).map(sanitizeDiagnosticText) }
-              : {}),
-            ...(typeof terminal.durationMs === "number" ? { durationMs: terminal.durationMs } : {}),
-            ...(typeof terminal.turns === "number" ? { turns: terminal.turns } : {}),
-            ...(typeof terminal.toolCount === "number" ? { toolCount: terminal.toolCount } : {}),
-            ...(terminal.acceptance !== undefined ? { acceptance: terminal.acceptance } : {}),
-            ...(terminal.review !== undefined ? { review: terminal.review } : {}),
-            ...(terminal.effects !== undefined ? { effects: terminal.effects } : {}),
-            ...(wireError ? { error: wireError } : {}),
-            ...(recoveryHint(status) ? { recoveryHint: recoveryHint(status) } : {}),
-          };
-          options.onDiagnostics?.(details);
-          if (typeof terminal.model === "string") options.onModelResolved?.(terminal.model);
-          if (typeof terminal.tokens === "number" && Number.isFinite(terminal.tokens) && terminal.tokens >= 0) {
-            // Protocol v1 reports only a total. Do not fabricate an input/output
-            // split or cost; the workflow still receives the authoritative total.
-            options.onUsage?.({ total: terminal.tokens, provenance: "pi-subagents-v1" });
-          }
-          if (status === "completed") {
-            const output = typeof terminal.output === "string" ? terminal.output : "";
-            if (!output.trim()) {
+        router.add(requestId, {
+          started: (raw) => {
+            const started = ownDataRecord(raw, STARTED_FIELDS);
+            if (!started) {
+              if (safelyTargets(raw, requestId)) malformed("started event");
+              return;
+            }
+            if (!validBase(started, requestId)) return;
+            acknowledgeBridge();
+          },
+          update: (raw) => {
+            const update = ownDataRecord(raw, UPDATE_FIELDS);
+            if (!update) {
+              if (safelyTargets(raw, requestId)) malformed("update");
+              return;
+            }
+            if (!validBase(update, requestId)) return;
+            const rawLines = update.recentOutputLines;
+            const lines = rawLines === undefined ? undefined : ownArrayValues(rawLines, MAX_PROGRESS_LINES);
+            const recentTools = update.recentTools;
+            if (
+              !validOptionalString(update.currentTool) ||
+              !validOptionalString(update.currentToolArgs, MAX_PROGRESS_LINE_CHARS) ||
+              !validOptionalString(update.recentOutput, MAX_PROGRESS_LINE_CHARS) ||
+              !validOptionalString(update.model) ||
+              !validOptionalNumber(update.toolCount) ||
+              !validOptionalNumber(update.durationMs) ||
+              !validOptionalNumber(update.tokens) ||
+              (rawLines !== undefined &&
+                !(
+                  lines?.every((line) => typeof line === "string" && line.length <= MAX_PROGRESS_LINE_CHARS) ?? false
+                )) ||
+              (recentTools !== undefined && !validKnownJson(recentTools))
+            ) {
+              malformed("update");
+              return;
+            }
+            if (typeof update.model === "string") options.onModelResolved?.(update.model);
+            const text =
+              typeof update.recentOutput === "string"
+                ? update.recentOutput
+                : lines
+                  ? lines.join("\n")
+                  : typeof update.currentTool === "string"
+                    ? `Running ${update.currentTool}`
+                    : "";
+            appendHistory(text, true);
+          },
+          response: (raw) => {
+            const terminal = ownDataRecord(raw, RESPONSE_FIELDS);
+            if (!terminal) {
+              if (safelyTargets(raw, requestId)) malformed("response");
+              return;
+            }
+            if (!validBase(terminal, requestId)) return;
+            if (typeof terminal.output === "string" && terminal.output.length > MAX_FINAL_OUTPUT_CHARS) {
               fail(
-                "pi-subagents completed without inline assistant output",
-                WorkflowErrorCode.AGENT_EMPTY_OUTPUT,
-                true,
-                details,
+                `pi-subagents final output exceeds ${MAX_FINAL_OUTPUT_CHARS} characters`,
+                WorkflowErrorCode.AGENT_EXECUTION_ERROR,
+                false,
               );
               return;
             }
-            appendHistory(output);
-            settle(() => resolve(output));
-            return;
-          }
-          const message = terminalMessage(status, wireError);
-          const limit = classifyProviderLimit(message);
-          if (limit.matched) {
-            settle(() =>
-              reject(
-                new WorkflowError(message, WorkflowErrorCode.PROVIDER_USAGE_LIMIT, {
-                  recoverable: false,
-                  resetHint: limit.resetHint,
+            if (terminal.output !== undefined && typeof terminal.output !== "string") {
+              malformed("response");
+              return;
+            }
+            const rawWarnings = terminal.warnings;
+            const warnings = rawWarnings === undefined ? undefined : ownArrayValues(rawWarnings, MAX_WARNING_COUNT);
+            if (
+              typeof terminal.status !== "string" ||
+              !validOptionalString(terminal.error, MAX_PROGRESS_LINE_CHARS) ||
+              !validOptionalString(terminal.runId) ||
+              !validOptionalString(terminal.agent) ||
+              !validOptionalString(terminal.model) ||
+              !validOptionalString(terminal.outputPath, MAX_PROGRESS_LINE_CHARS) ||
+              !validOptionalString(terminal.sessionFile, MAX_PROGRESS_LINE_CHARS) ||
+              !validOptionalNumber(terminal.childIndex) ||
+              !validOptionalNumber(terminal.turns) ||
+              !validOptionalNumber(terminal.toolCount) ||
+              !validOptionalNumber(terminal.durationMs) ||
+              !validOptionalNumber(terminal.tokens) ||
+              (terminal.exitCode !== undefined &&
+                (typeof terminal.exitCode !== "number" || !Number.isInteger(terminal.exitCode))) ||
+              !validKnownJson(terminal.execution) ||
+              !validKnownJson(terminal.acceptance) ||
+              !validKnownJson(terminal.review) ||
+              !validKnownJson(terminal.effects) ||
+              (rawWarnings !== undefined &&
+                !(
+                  warnings?.every((item) => typeof item === "string" && item.length <= MAX_PROTOCOL_STRING_CHARS) ??
+                  false
+                ))
+            ) {
+              malformed("response");
+              return;
+            }
+
+            if (!isTerminalStatus(terminal.status)) {
+              fail(
+                `pi-subagents returned unsupported protocol status ${JSON.stringify(terminal.status)}`,
+                WorkflowErrorCode.AGENT_EXECUTION_ERROR,
+                false,
+              );
+              return;
+            }
+            acknowledgeBridge();
+            const status = terminal.status;
+            const wireError = typeof terminal.error === "string" ? sanitizeDiagnosticText(terminal.error) : undefined;
+            const effectiveModel = typeof terminal.model === "string" ? terminal.model : undefined;
+            const usage =
+              typeof terminal.tokens === "number"
+                ? {
+                    total: terminal.tokens,
+                    provenance: "pi-subagents-v1" as const,
+                  }
+                : undefined;
+            const details: PiSubagentsDiagnosticDetails = {
+              backend: "pi-subagents",
+              providerStatus: status,
+              providerId: PI_SUBAGENTS_PROVIDER_ID,
+              providerGeneration: descriptor.generation,
+              protocol: PI_SUBAGENTS_PROTOCOL_VERSION,
+              role: options.agentType ?? "delegate",
+              roleSemantics: "pi-subagents-provider-role",
+              ...(options.model ? { requestedModel: options.model } : {}),
+              ...(effectiveModel ? { effectiveModel } : {}),
+              modelPrecedence: options.modelPrecedence ?? (options.model ? "explicit" : "session"),
+              ...(usage ? { usage } : {}),
+              ...(typeof terminal.runId === "string" ? { runId: terminal.runId } : {}),
+              ...(typeof terminal.outputPath === "string" ? { outputPath: terminal.outputPath } : {}),
+              ...(typeof terminal.sessionFile === "string" ? { sessionFile: terminal.sessionFile } : {}),
+              ...(warnings
+                ? {
+                    warnings: (warnings as string[]).slice(0, MAX_PERSISTED_WARNING_COUNT).map(sanitizeDiagnosticText),
+                  }
+                : {}),
+              ...(typeof terminal.durationMs === "number" ? { durationMs: terminal.durationMs } : {}),
+              ...(typeof terminal.turns === "number" ? { turns: terminal.turns } : {}),
+              ...(typeof terminal.toolCount === "number" ? { toolCount: terminal.toolCount } : {}),
+              ...(terminal.acceptance !== undefined ? { acceptance: terminal.acceptance } : {}),
+              ...(terminal.review !== undefined ? { review: terminal.review } : {}),
+              ...(terminal.effects !== undefined ? { effects: terminal.effects } : {}),
+              ...(wireError ? { error: wireError } : {}),
+              ...(recoveryHint(status) ? { recoveryHint: recoveryHint(status) } : {}),
+            };
+            options.onDiagnostics?.(details);
+            if (typeof terminal.model === "string") options.onModelResolved?.(terminal.model);
+            if (typeof terminal.tokens === "number" && Number.isFinite(terminal.tokens) && terminal.tokens >= 0) {
+              // Protocol v1 reports only a total. Do not fabricate an input/output
+              // split or cost; the workflow still receives the authoritative total.
+              options.onUsage?.({
+                total: terminal.tokens,
+                provenance: "pi-subagents-v1",
+              });
+            }
+            if (status === "completed") {
+              const output = typeof terminal.output === "string" ? terminal.output : "";
+              if (!output.trim()) {
+                fail(
+                  "pi-subagents completed without inline assistant output",
+                  WorkflowErrorCode.AGENT_EMPTY_OUTPUT,
+                  true,
                   details,
-                }),
-              ),
-            );
-            return;
-          }
-          if (status === "timed_out") fail(message, WorkflowErrorCode.AGENT_TIMEOUT, true, details);
-          else if (status === "cancelled" || status === "interrupted")
-            fail(message, WorkflowErrorCode.WORKFLOW_ABORTED, true, details);
-          else if (status === "invalid_request")
-            fail(message, WorkflowErrorCode.SCRIPT_VALIDATION_ERROR, false, details);
-          else if (status === "unavailable_context" || status === "acceptance_failed")
-            fail(message, WorkflowErrorCode.AGENT_EXECUTION_ERROR, false, details);
-          else fail(message, WorkflowErrorCode.AGENT_EXECUTION_ERROR, true, details);
+                );
+                return;
+              }
+              appendHistory(output);
+              settle(() => resolve(output));
+              return;
+            }
+            const message = terminalMessage(status, wireError);
+            const limit = classifyProviderLimit(message);
+            if (limit.matched) {
+              settle(() =>
+                reject(
+                  new WorkflowError(message, WorkflowErrorCode.PROVIDER_USAGE_LIMIT, {
+                    recoverable: false,
+                    resetHint: limit.resetHint,
+                    details,
+                  }),
+                ),
+              );
+              return;
+            }
+            if (status === "timed_out") fail(message, WorkflowErrorCode.AGENT_TIMEOUT, true, details);
+            else if (status === "cancelled" || status === "interrupted")
+              fail(message, WorkflowErrorCode.WORKFLOW_ABORTED, true, details);
+            else if (status === "invalid_request")
+              fail(message, WorkflowErrorCode.SCRIPT_VALIDATION_ERROR, false, details);
+            else if (status === "unavailable_context" || status === "acceptance_failed")
+              fail(message, WorkflowErrorCode.AGENT_EXECUTION_ERROR, false, details);
+            else fail(message, WorkflowErrorCode.AGENT_EXECUTION_ERROR, true, details);
+          },
         }),
       );
 

@@ -31,10 +31,12 @@ function reviewedBus(): EventBus {
 function listenerCountingBus() {
   const inner = createEventBus();
   let listeners = 0;
+  let maximumListeners = 0;
   const bus: EventBus = {
     emit: inner.emit.bind(inner),
     on(channel, handler) {
       listeners++;
+      maximumListeners = Math.max(maximumListeners, listeners);
       const off = inner.on(channel, handler);
       return () => {
         listeners--;
@@ -43,7 +45,7 @@ function listenerCountingBus() {
     },
   };
   registerSubagentDelegationProvider(bus, DEFAULT_SUBAGENT_DELEGATION_PROVIDER);
-  return { bus, count: () => listeners };
+  return { bus, count: () => listeners, maximum: () => maximumListeners };
 }
 
 test("pi-subagents backend sends only protocol v1 and maps start/update/usage/history/diagnostics", async () => {
@@ -205,6 +207,40 @@ test("pi-subagents backend correlates concurrent responses strictly by requestId
   bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(requests[1].requestId, { output: "B" }));
   bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(requests[0].requestId, { output: "A" }));
   assert.deepEqual(await Promise.all([a, b]), ["A", "B"]);
+});
+
+test("pi-subagents backend uses one bounded listener set for high fan-out", async () => {
+  const { bus, count, maximum } = listenerCountingBus();
+  const requests: any[] = [];
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw) => requests.push(raw));
+  const backend = new PiSubagentsBackend(bus);
+  const pending = Array.from({ length: 250 }, (_, index) => backend.run(`task-${index}`, { cwd: "/repo" }));
+
+  assert.equal(requests.length, 250);
+  assert.equal(count(), 4, "one request listener plus one shared started/update/response router");
+  assert.equal(maximum(), 4, "listener count must not grow with request fan-out");
+  for (let index = requests.length - 1; index >= 0; index--) {
+    bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(requests[index].requestId, { output: `done-${index}` }));
+  }
+  assert.equal((await Promise.all(pending))[0], "done-0");
+  assert.equal(count(), 1, "the generation router is disposed after its final request settles");
+});
+
+test("pi-subagents backend accepts out-of-order progress without treating it as acknowledgement", async () => {
+  const bus = reviewedBus();
+  let requestId = "";
+  const histories: any[][] = [];
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
+    requestId = raw.requestId;
+    bus.emit(PI_SUBAGENTS_UPDATE_EVENT, { version: 1, requestId, recentOutput: "early progress" });
+    bus.emit(PI_SUBAGENTS_STARTED_EVENT, { version: 1, requestId });
+    bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(requestId));
+  });
+  await new PiSubagentsBackend(bus).run("task", { cwd: "/repo", onHistory: (value) => histories.push(value) });
+  assert.equal(
+    histories.flat().some((entry) => entry.text === "early progress"),
+    true,
+  );
 });
 
 test("pi-subagents backend abort emits correlated cancel and cleans listeners", async () => {
@@ -444,6 +480,40 @@ test("pi-subagents retains a bounded coalesced progress tail", async () => {
   assert.equal(tail.filter((entry) => entry.text === "line-99\nline-99").length, 1);
 });
 
+test("pi-subagents progress remains a bounded recent tail after crossing the character budget", async () => {
+  const bus = reviewedBus();
+  let finalHistory: any[] = [];
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
+    bus.emit(PI_SUBAGENTS_STARTED_EVENT, { version: 1, requestId: raw.requestId });
+    for (let index = 0; index < 40; index++) {
+      bus.emit(PI_SUBAGENTS_UPDATE_EVENT, {
+        version: 1,
+        requestId: raw.requestId,
+        recentOutput: `${index}:`.padEnd(16_000, "x"),
+      });
+    }
+    bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(raw.requestId));
+  });
+  await new PiSubagentsBackend(bus).run("task", {
+    cwd: "/repo",
+    onHistory: (value) => (finalHistory = value),
+  });
+  assert.ok(
+    finalHistory.length <= 17,
+    `expected character-bounded history plus final output, got ${finalHistory.length}`,
+  );
+  assert.equal(
+    finalHistory.some((entry) => entry.text.startsWith("39:")),
+    true,
+    "the newest progress must be retained",
+  );
+  assert.equal(
+    finalHistory.some((entry) => entry.text.startsWith("0:")),
+    false,
+    "old progress must be evicted",
+  );
+});
+
 test("pi-subagents rejects excessive progress before joining lines", async () => {
   const bus = reviewedBus();
   bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
@@ -477,6 +547,31 @@ test("pi-subagents cancel is best-effort and abort settles exactly once", async 
   controller.abort();
   await assert.rejects(pending, /cancelled|aborted/i);
   assert.equal(cancels, 1);
+});
+
+test("pi-subagents cancellation storm settles every request and releases the shared router", async () => {
+  const { bus, count, maximum } = listenerCountingBus();
+  let cancels = 0;
+  bus.on(PI_SUBAGENTS_CANCEL_EVENT, () => cancels++);
+  const backend = new PiSubagentsBackend(bus);
+  const controllers = Array.from({ length: 100 }, () => new AbortController());
+  const pending = controllers.map((controller, index) =>
+    backend.run(`task-${index}`, { cwd: "/repo", signal: controller.signal }),
+  );
+  for (const controller of controllers) controller.abort();
+  const results = await Promise.allSettled(pending);
+
+  assert.equal(
+    results.every((result) => result.status === "rejected"),
+    true,
+  );
+  assert.equal(cancels, 100);
+  assert.equal(
+    maximum(),
+    4,
+    "two test listeners plus one shared three-channel router overlap at five minus setup order",
+  );
+  assert.equal(count(), 1, "only the cancel observer remains after every request settles");
 });
 
 test("pi-subagents timeout/abort response races settle once and release listeners", async () => {
@@ -524,6 +619,26 @@ test("provider negotiation caches by generation and observes reload/version drif
     packageVersion: "0.37.1-drift",
   });
   assert.throws(() => backend.negotiate(), /package version drifted.*0\.37\.1-drift/i);
+});
+
+test("provider reload keeps generation routers isolated and disposes each exactly", async () => {
+  const { bus, count, maximum } = listenerCountingBus();
+  const requests: any[] = [];
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw) => requests.push(raw));
+  const backend = new PiSubagentsBackend(bus);
+  const oldGeneration = backend.run("old", { cwd: "/repo" });
+  registerSubagentDelegationProvider(bus, DEFAULT_SUBAGENT_DELEGATION_PROVIDER);
+  const newGeneration = backend.run("new", { cwd: "/repo" });
+
+  assert.equal(requests.length, 2);
+  assert.equal(count(), 7, "one request listener plus one router per live generation");
+  assert.equal(maximum(), 7);
+  bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(requests[1].requestId, { output: "new" }));
+  assert.equal(await newGeneration, "new");
+  assert.equal(count(), 4, "the new generation router disposes without disturbing the old request");
+  bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(requests[0].requestId, { output: "old" }));
+  assert.equal(await oldGeneration, "old");
+  assert.equal(count(), 1);
 });
 
 test("cached provider generation still negotiates request-specific fields", () => {
