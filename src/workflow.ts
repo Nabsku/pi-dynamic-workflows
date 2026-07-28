@@ -4,8 +4,8 @@ import vm from "node:vm";
 import type { Node } from "acorn";
 import { parse } from "acorn";
 import type { TSchema } from "typebox";
-import type { AgentUsage } from "./agent.js";
-import { type AgentRunOptions, WorkflowAgent, type WorkflowAgentOptions } from "./agent.js";
+import type { AgentRunOptions, AgentUsage, WorkflowAgentOptions } from "./agent.js";
+import { createAgentExecutionBackendSelector } from "./agent-execution-backend.js";
 import type { AgentHistoryEntry } from "./agent-history.js";
 import {
   type AgentDefinition,
@@ -421,7 +421,7 @@ export async function runWorkflow<T = unknown>(
     firstMiss: Number.POSITIVE_INFINITY,
   };
 
-  const agentRunner = options.agent ?? new WorkflowAgent(options);
+  const selectAgentBackend = createAgentExecutionBackendSelector(options, options.agent);
   const concurrency = normalizeConcurrency(
     options.concurrency ?? Math.max(1, (globalThis.navigator?.hardwareConcurrency ?? 8) - 2),
   );
@@ -617,6 +617,7 @@ export async function runWorkflow<T = unknown>(
 
     // Fail unavailable or drifted delegated providers before reserving capacity.
     // This synchronous discovery is not request acknowledgement.
+    const agentRunner = selectAgentBackend(agentOptions.backend === "pi-subagents" ? "pi-subagents" : "native");
     agentRunner.preflight?.({
       schema: agentOptions.schema,
       model: modelSpec,

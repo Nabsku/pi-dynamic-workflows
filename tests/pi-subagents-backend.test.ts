@@ -71,6 +71,29 @@ return { native, delegated }`,
   ]);
 });
 
+test("delegated execution is isolated from native-only runner setup failures", async () => {
+  const bus = reviewedBus();
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
+    bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(raw.requestId, { output: "isolated" }));
+  });
+  const options = {
+    cwd: "/repo",
+    piSubagentsEvents: bus,
+    persistLogs: false,
+    get session(): never {
+      throw new Error("native session setup must not run");
+    },
+  };
+
+  const result = await runWorkflow(
+    `export const meta = { name: 'delegated_isolation', description: 'delegated isolation' }
+return await agent('inspect', { backend: 'pi-subagents', agentType: 'reviewer' })`,
+    options,
+  );
+
+  assert.equal(result.result, "isolated");
+});
+
 test("pi-subagents backend sends only protocol v1 and maps start/update/usage/history/diagnostics", async () => {
   const { bus, count } = listenerCountingBus();
   let request: any;
