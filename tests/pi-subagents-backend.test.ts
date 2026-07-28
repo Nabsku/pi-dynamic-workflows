@@ -153,10 +153,18 @@ test("pi-subagents backend sends only protocol v1 and maps start/update/usage/hi
         durationMs: 1234,
         turns: 3,
         toolCount: 2,
-        execution: { status: "completed", success: true, exitCode: 0 },
+        execution: {
+          status: "completed",
+          success: true,
+          exitCode: 0,
+          credentials: { apiKey: "ordinary-api-key", password: "ordinary-password" },
+        },
         acceptance: { status: "checked", evidenceStatus: "checked", explicit: true },
-        review: { status: "not-requested" },
-        effects: { fileMutation: { status: "not-applicable", expected: false, attempted: false } },
+        review: { status: "not-requested", auth: { client_secret: "ordinary-client-secret" } },
+        effects: {
+          fileMutation: { status: "not-applicable", expected: false, attempted: false },
+          headers: { authorization: "ordinary-authorization", bearerToken: "ordinary-bearer-token" },
+        },
         warnings: ["Bearer secret-token", "apiKey=private-value"],
       }),
     );
@@ -203,10 +211,18 @@ test("pi-subagents backend sends only protocol v1 and maps start/update/usage/hi
       durationMs: 1234,
       turns: 3,
       toolCount: 2,
-      execution: { status: "completed", success: true, exitCode: 0 },
+      execution: {
+        status: "completed",
+        success: true,
+        exitCode: 0,
+        credentials: { apiKey: "[redacted]", password: "[redacted]" },
+      },
       acceptance: { status: "checked", evidenceStatus: "checked", explicit: true },
-      review: { status: "not-requested" },
-      effects: { fileMutation: { status: "not-applicable", expected: false, attempted: false } },
+      review: { status: "not-requested", auth: { client_secret: "[redacted]" } },
+      effects: {
+        fileMutation: { status: "not-applicable", expected: false, attempted: false },
+        headers: { authorization: "[redacted]", bearerToken: "[redacted]" },
+      },
       warnings: ["Bearer [redacted]", "apiKey=[redacted]"],
     },
   });
@@ -436,10 +452,17 @@ test("pi-subagents backend sanitizes terminal and nested diagnostics before expo
       requestId: raw.requestId,
       status: "acceptance_failed",
       error: "apiKey=private-value useful acceptance detail",
-      execution: { error: "Bearer nested-secret", detail: ["token=inner-token", { note: "execution retained" }] },
+      execution: {
+        error: "Bearer nested-secret",
+        detail: ["token=inner-token", { note: "execution retained" }],
+        credentials: { apiKey: "object-api-key", password: "object-password" },
+      },
       acceptance: { reason: "password=hunter2 evidence missing" },
-      review: { comment: "token: reviewer-secret fix the evidence" },
-      effects: { warning: "api_key=effects-secret mutation unknown" },
+      review: { comment: "token: reviewer-secret fix the evidence", client_secret: "object-client-secret" },
+      effects: {
+        warning: "api_key=effects-secret mutation unknown",
+        headers: { authorization: "object-authorization", bearerToken: "object-bearer-token" },
+      },
     });
   });
 
@@ -453,6 +476,11 @@ test("pi-subagents backend sanitizes terminal and nested diagnostics before expo
       "hunter2",
       "reviewer-secret",
       "effects-secret",
+      "object-api-key",
+      "object-password",
+      "object-client-secret",
+      "object-authorization",
+      "object-bearer-token",
     ]) {
       assert.doesNotMatch(exposed, new RegExp(secret));
     }

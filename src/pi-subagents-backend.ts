@@ -143,11 +143,27 @@ export function sanitizePiSubagentsDiagnosticText(value: string): string {
     .replace(/\b(api[_ -]?key|token|password)\s*[:=]\s*\S+/gi, "$1=[redacted]");
 }
 
-function sanitizeDiagnosticValue(value: unknown): unknown {
+function isSensitiveDiagnosticKey(key: string): boolean {
+  const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  return (
+    normalized.includes("apikey") ||
+    normalized.includes("password") ||
+    normalized.includes("authorization") ||
+    normalized.includes("bearer") ||
+    normalized.includes("secret") ||
+    normalized === "token" ||
+    normalized.endsWith("token")
+  );
+}
+
+function sanitizeDiagnosticValue(value: unknown, key?: string): unknown {
+  if (key && isSensitiveDiagnosticKey(key)) return "[redacted]";
   if (typeof value === "string") return sanitizePiSubagentsDiagnosticText(value);
   if (Array.isArray(value)) return value.map((item) => sanitizeDiagnosticValue(item));
   if (value !== null && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitizeDiagnosticValue(item)]));
+    return Object.fromEntries(
+      Object.entries(value).map(([itemKey, item]) => [itemKey, sanitizeDiagnosticValue(item, itemKey)]),
+    );
   }
   return value;
 }

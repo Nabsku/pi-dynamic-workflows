@@ -101,10 +101,17 @@ function errorDetailManager(): Pick<WorkflowManager, "listRuns" | "getRun"> {
             durationMs: 125,
             turns: 2,
             toolCount: 1,
-            execution: { error: "Bearer nested-secret", detail: "execution retained" },
+            execution: {
+              error: "Bearer nested-secret",
+              detail: "execution retained",
+              credentials: { apiKey: "object-api-key", password: "object-password" },
+            },
             acceptance: { status: "rejected", reason: "password=hunter2 evidence missing" },
-            review: { comment: "token=reviewer-secret fix the evidence" },
-            effects: { warning: "apiKey=private-value mutation unknown" },
+            review: { comment: "token=reviewer-secret fix the evidence", client_secret: "object-client-secret" },
+            effects: {
+              warning: "apiKey=private-value mutation unknown",
+              headers: { authorization: "object-authorization", bearerToken: "object-bearer-token" },
+            },
             error: "acceptance evidence missing; apiKey=terminal-secret",
             recoveryHint: "Inspect the acceptance metadata and address the rejected evidence.",
           },
@@ -744,7 +751,10 @@ test("renderNavigator shows agent error diagnostics in detail view", () => {
   assert.match(text, /Execution:.*Bearer \[redacted\].*execution retained/);
   assert.match(text, /Review:.*token=\[redacted\].*fix the evidence/);
   assert.match(text, /Effects:.*apiKey=\[redacted\].*mutation unknown/);
-  assert.doesNotMatch(text, /nested-secret|hunter2|reviewer-secret|private-value|terminal-secret/);
+  assert.doesNotMatch(
+    text,
+    /nested-secret|hunter2|reviewer-secret|private-value|terminal-secret|object-api-key|object-password|object-client-secret|object-authorization|object-bearer-token/,
+  );
   state.togglePager();
   state.jump("end", 0);
   const pager = renderNavigator(state, model, 80).join("\n");

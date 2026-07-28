@@ -719,9 +719,16 @@ test(
         turns: 2,
         toolCount: 1,
         error: "apiKey=private-value useful failure detail",
-        execution: { error: "Bearer nested-secret", detail: "execution retained" },
-        review: { comment: "token=reviewer-secret fix the evidence" },
-        effects: { warning: "password=hunter2 mutation unknown" },
+        execution: {
+          error: "Bearer nested-secret",
+          detail: "execution retained",
+          credentials: { apiKey: "object-api-key", password: "object-password" },
+        },
+        review: { comment: "token=reviewer-secret fix the evidence", client_secret: "object-client-secret" },
+        effects: {
+          warning: "password=hunter2 mutation unknown",
+          headers: { authorization: "object-authorization", bearer_token: "object-bearer-token" },
+        },
       },
     };
     const manager = new WorkflowManager({
@@ -738,13 +745,19 @@ test(
     const result = await manager.runSync(oneAgentScript);
     assert.ok(result.runId);
     const liveDiagnostics = JSON.stringify(manager.getRun(result.runId)?.snapshot.agents[0]?.diagnostics);
-    assert.doesNotMatch(liveDiagnostics, /private-value|nested-secret|reviewer-secret|hunter2/);
+    assert.doesNotMatch(
+      liveDiagnostics,
+      /private-value|nested-secret|reviewer-secret|hunter2|object-api-key|object-password|object-client-secret|object-authorization|object-bearer-token/,
+    );
     assert.match(liveDiagnostics, /\[redacted\]/);
     assert.match(liveDiagnostics, /execution retained/);
     const coldManager = new WorkflowManager({ cwd, agent: fakeAgent() as never });
     const persisted = coldManager.listRuns().find((run) => run.runId === result.runId);
     const coldDiagnostics = JSON.stringify(persisted?.agents[0]?.diagnostics);
-    assert.doesNotMatch(coldDiagnostics, /private-value|nested-secret|reviewer-secret|hunter2/);
+    assert.doesNotMatch(
+      coldDiagnostics,
+      /private-value|nested-secret|reviewer-secret|hunter2|object-api-key|object-password|object-client-secret|object-authorization|object-bearer-token/,
+    );
     assert.match(coldDiagnostics, /\[redacted\]/);
     assert.match(coldDiagnostics, /execution retained/);
     assert.equal(persisted?.tokenUsage?.provenance, "pi-subagents-v1");
