@@ -155,7 +155,8 @@ export type WorkflowRuntimeEvent =
 /** Minimal injected agent surface used by the workflow runtime and deterministic tests. */
 export interface WorkflowAgentRunner {
   run(prompt: string, options?: AgentRunOptions<TSchema>): Promise<unknown>;
-  preflight?(options: AgentRunOptions<TSchema>): void;
+  /** Optional effective execution identity included in deterministic resume keys. */
+  preflight?(options: AgentRunOptions<TSchema>): string | undefined;
 }
 
 export interface WorkflowRunOptions extends WorkflowAgentOptions {
@@ -602,6 +603,14 @@ export async function runWorkflow<T = unknown>(
     if (agentOptions.backend !== "pi-subagents" && agentOptions.agentType && !agentDef) {
       log(`unknown agentType "${agentOptions.agentType}"; using default tools/model`);
     }
+    const resolvedIsolation = agentOptions.isolation ?? agentDef?.isolation;
+    if (agentOptions.backend === "pi-subagents" && resolvedIsolation === "worktree") {
+      throw new WorkflowError(
+        'backend "pi-subagents" cannot guarantee mutation authority or durable filesystem effects and therefore cannot own workflow worktree isolation; use backend "native" for mutating/worktree agents',
+        WorkflowErrorCode.SCRIPT_VALIDATION_ERROR,
+        { recoverable: false },
+      );
+    }
 
     // Model precedence: explicit agentOptions.model > agentType.model > tier > phase model.
     // The "explicit-level" model is opts.model, else the definition's model — either
@@ -618,7 +627,7 @@ export async function runWorkflow<T = unknown>(
 
     // Fail unavailable or drifted delegated providers before reserving capacity.
     // This synchronous discovery is not request acknowledgement.
-    agentRunner.preflight?.({
+    const preflightIdentity = agentRunner.preflight?.({
       schema: agentOptions.schema,
       model: modelSpec,
       tier: agentOptions.tier,
@@ -626,11 +635,19 @@ export async function runWorkflow<T = unknown>(
       agentType: agentOptions.agentType,
       timeoutMs: agentOptions.timeoutMs !== undefined ? agentOptions.timeoutMs : agentTimeoutMs,
     });
+    const executionIdentity = typeof preflightIdentity === "string" ? preflightIdentity : undefined;
 
     // Deterministic resume key: assigned at lexical call time, before the limiter,
     // so parallel()/pipeline() fan-out is reproducible for a fixed script.
     const callIndex = state.callSeq++;
-    const callHash = hashAgentCall(prompt, modelSpec, assignedPhase, agentOptions, agentDefinitionKey(agentDef));
+    const callHash = hashAgentCall(
+      prompt,
+      modelSpec,
+      assignedPhase,
+      agentOptions,
+      agentDefinitionKey(agentDef),
+      executionIdentity,
+    );
     // Store delta key: callIndex alone is NOT run-unique. A nested workflow()
     // call (see workflowFn below) shares this run's SharedStore instance but
     // restarts its own callSeq at 0, so a parent agent and a concurrently
@@ -666,6 +683,7 @@ export async function runWorkflow<T = unknown>(
     const hashMatches = cached != null && cached.hash === callHash;
     const cachedEmptyOutput = hashMatches && isEmptyTextAgentResult(cached.result, agentOptions.schema);
     if (hashMatches && !cachedEmptyOutput && callIndex < state.firstMiss) {
+      const replayedDiagnostics = replayDelegatedDiagnostics(cached.delegatedDiagnostics);
       const replayModel =
         agentOptions.backend === "pi-subagents" ? cached.delegatedDiagnostics?.effectiveModel : displayModel;
       options.onAgentStart?.({ id: deltaKey, label, phase: assignedPhase, prompt, model: replayModel });
@@ -676,7 +694,7 @@ export async function runWorkflow<T = unknown>(
         result: cached.result,
         tokens: 0,
         model: replayModel,
-        delegatedDiagnostics: cached.delegatedDiagnostics,
+        delegatedDiagnostics: replayedDiagnostics,
       });
       // Apply this agent's write delta so live agents later in the run see a
       // consistent store. Additive apply preserves parallel-agent writes that
@@ -701,7 +719,6 @@ export async function runWorkflow<T = unknown>(
       // is no sentinel to suppress a def's isolation at the call site. Remove the agentType
       // or override with a def that has no isolation field if opt-out is needed.
       let worktree: Worktree | undefined;
-      const resolvedIsolation = agentOptions.isolation ?? agentDef?.isolation;
       if (resolvedIsolation === "worktree") {
         worktree = await createWorktree(baseCwd, `${runId}-${callIndex}-${label}`);
         if (!worktree.isolated) log(`isolation ignored for "${label}" (${worktree.reason})`);
@@ -1565,6 +1582,7 @@ function hashAgentCall(
   phase: string | undefined,
   options: AgentOptions,
   agentDefKey: string | null,
+  executionIdentity: string | undefined,
 ): string {
   const identity = JSON.stringify({
     prompt,
@@ -1573,12 +1591,26 @@ function hashAgentCall(
     phase: phase ?? null,
     agentType: options.agentType ?? null,
     backend: options.backend ?? "native",
+    executionIdentity: executionIdentity ?? null,
     // Resolved definition (tools/model/prompt) so editing an agent .md invalidates
     // this call's cached result on a later resume.
     agentDef: agentDefKey,
     schema: options.schema ?? null,
   });
   return createHash("sha256").update(identity).digest("hex");
+}
+
+function replayDelegatedDiagnostics(
+  diagnostics: PiSubagentsDiagnosticDetails | undefined,
+): PiSubagentsDiagnosticDetails | undefined {
+  if (!diagnostics) return undefined;
+  const { effects: _effects, warnings, ...rest } = diagnostics;
+  const replayWarning = "journal replay: filesystem effects were not revalidated";
+  return {
+    ...rest,
+    replayed: true,
+    warnings: [...(warnings ?? []).slice(0, 9), replayWarning],
+  };
 }
 
 function buildAgentInstructions(

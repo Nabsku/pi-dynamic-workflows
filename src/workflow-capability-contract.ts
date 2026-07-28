@@ -184,6 +184,8 @@ const AGENT_OPTIONS: OptionShape = {
     option("backend", '"native" | "pi-subagents"', true, '"native"', [
       "pi-subagents is opt-in and requires its public v1 bridge in the same Pi process",
       "pi-subagents provides awaited request-scoped text results within foreground or background workflow runs; it does not support schema, workflow shared-store child tools, or workflow custom toolsets",
+      "pi-subagents is analysis/research/review/report-only at this consumer boundary; provider v1 cannot guarantee read-only authority or durable mutation effects, so worktree isolation fails closed",
+      "delegated resume keys include the reviewed provider/package/protocol contract; replayed text never preserves filesystem-effect claims",
       "pi-subagents is experimental fork-only support with no automatic selection or silent fallback",
       "pi-subagents provider and lifecycle reports are not authentication, authorization, or approval evidence",
     ]),

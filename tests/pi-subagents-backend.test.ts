@@ -324,6 +324,24 @@ test("pi-subagents backend rejects schema and unsupported workflow tools before 
   assert.equal(emitted, 0);
 });
 
+test("pi-subagents backend fails closed when delegated execution is combined with worktree isolation", async () => {
+  const bus = reviewedBus();
+  let emitted = 0;
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, () => emitted++);
+  await assert.rejects(
+    runWorkflow(
+      `export const meta = { name: 'delegated_worktree', description: 'must fail closed' }
+return await agent('implement this', { backend: 'pi-subagents', agentType: 'worker', isolation: 'worktree' })`,
+      { cwd: "/repo", piSubagentsEvents: bus, persistLogs: false },
+    ),
+    (error: unknown) =>
+      error instanceof WorkflowError &&
+      error.code === "SCRIPT_VALIDATION_ERROR" &&
+      /cannot guarantee mutation authority.*worktree isolation/i.test(error.message),
+  );
+  assert.equal(emitted, 0, "unsafe delegated worktree combinations fail before provider dispatch");
+});
+
 test("pi-subagents backend rejects missing event bus without emitting", async () => {
   await assert.rejects(
     new PiSubagentsBackend(undefined).run("task", { cwd: "/repo" }),
@@ -605,7 +623,7 @@ test("offline two-agent native and delegated smoke", async () => {
   });
   const runner = {
     preflight(options: any) {
-      if (options.backend === "pi-subagents") delegated.negotiate(options);
+      return options.backend === "pi-subagents" ? delegated.executionIdentity(options) : undefined;
     },
     async run(prompt: string, options: any) {
       if (options.backend === "pi-subagents") return delegated.run(prompt, { ...options, cwd: options.cwd ?? "/repo" });
@@ -678,7 +696,15 @@ test("pi-subagents diagnostics survive journal replay without a second provider 
   const journal: any[] = [];
   bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
     requests++;
-    bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(raw.requestId, { runId: "child-1", turns: 2, toolCount: 1 }));
+    bus.emit(
+      PI_SUBAGENTS_RESPONSE_EVENT,
+      response(raw.requestId, {
+        runId: "child-1",
+        turns: 2,
+        toolCount: 1,
+        effects: { fileMutation: { status: "observed", expected: true, attempted: true } },
+      }),
+    );
   });
   const script = `export const meta = { name: 'diagnostics_replay', description: 'diagnostics replay' }
 return await agent('task', { backend: 'pi-subagents', agentType: 'reviewer' })`;
@@ -701,11 +727,47 @@ return await agent('task', { backend: 'pi-subagents', agentType: 'reviewer' })`;
     onAgentEnd: (event) => (replayed = event.delegatedDiagnostics),
   });
   assert.equal(requests, 1);
+  assert.equal(canonical.effects.fileMutation.status, "observed");
+  assert.equal(canonical.replayed, undefined);
   assert.equal(canonical.effectiveModel, undefined);
   assert.equal(Object.hasOwn(canonical, "effectiveModel"), false);
   assert.equal(replayed.runId, "child-1");
   assert.equal(replayed.providerStatus, "completed");
   assert.equal(replayed.role, "reviewer");
+  assert.equal(replayed.replayed, true);
+  assert.equal(replayed.effects, undefined, "cached text does not replay provider effect claims");
+  assert.match(replayed.warnings.at(-1), /effects were not revalidated/i);
   assert.equal(replayed.effectiveModel, undefined);
   assert.equal(Object.hasOwn(replayed, "effectiveModel"), false);
+});
+
+test("pi-subagents resume preserves analysis across compatible provider generation changes", async () => {
+  const bus = reviewedBus();
+  let requests = 0;
+  const journal: any[] = [];
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
+    requests++;
+    bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(raw.requestId, { output: `generation-${requests}` }));
+  });
+  const script = `export const meta = { name: 'generation_resume', description: 'generation-bound resume' }
+return await agent('analyze', { backend: 'pi-subagents', agentType: 'reviewer' })`;
+  await runWorkflow(script, {
+    cwd: "/repo",
+    piSubagentsEvents: bus,
+    persistLogs: false,
+    runId: "generation-run",
+    onAgentJournal: (entry) => journal.push(entry),
+  });
+
+  registerSubagentDelegationProvider(bus, DEFAULT_SUBAGENT_DELEGATION_PROVIDER);
+  const resumed = await runWorkflow(script, {
+    cwd: "/repo",
+    piSubagentsEvents: bus,
+    persistLogs: false,
+    runId: "generation-run",
+    resumeJournal: new Map(journal.map((entry) => [`${entry.runId}:${entry.index}`, entry])),
+  });
+
+  assert.equal(requests, 1, "compatible provider reload preserves the reviewed execution contract identity");
+  assert.equal(resumed.result, "generation-1");
 });

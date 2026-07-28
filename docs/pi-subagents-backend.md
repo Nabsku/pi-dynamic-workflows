@@ -83,7 +83,7 @@ Omitting `backend` uses native execution. There is no global backend switch.
 
 The delegated adapter supports awaited, request-scoped text-result calls inside both foreground and background workflow runs, explicit pi-subagents role names, optional resolved model forwarding, timeout policy, correlated start/progress/terminal events, cancellation, aggregate token totals when reported, and diagnostic paths/warnings. The workflow runtime remains authoritative for workflow call identity, run ownership, controls, limits, retries, journal/result handling, persistence, reload handoff, resume, and UI state; pi-subagents remains authoritative for its role configuration and each delegated child execution until a correlated terminal event settles that request.
 
-It does not support workflow JSON Schema, workflow shared-store child tools, workflow custom toolsets, detached provider-owned child jobs, or a second workflow lifecycle authority. It does not define a public provider registry/discovery protocol: discovery is the exact reviewed fork's synchronous process-local compatibility seam. `background` controls the workflow run's delivery boundary, not a second provider mode: each delegated request stays awaited by and correlated to its owning workflow run, including after a default-background tool call has returned its run ID.
+It does not support workflow JSON Schema, workflow shared-store child tools, workflow custom toolsets, detached provider-owned child jobs, or a second workflow lifecycle authority. The consumer boundary is analysis/research/review/report-only. Protocol v1 does not let this consumer constrain the provider role's tools or prove read-only authority, so operators must configure delegated roles accordingly; `backend: "pi-subagents"` combined with `isolation: "worktree"` fails closed instead of advertising mutation safety. Native execution is the sole worktree owner for mutating agents. It does not define a public provider registry/discovery protocol: discovery is the exact reviewed fork's synchronous process-local compatibility seam. `background` controls the workflow run's delivery boundary, not a second provider mode: each delegated request stays awaited by and correlated to its owning workflow run, including after a default-background tool call has returned its run ID.
 
 Model and role precedence differs deliberately from native execution:
 
@@ -93,6 +93,8 @@ Model and role precedence differs deliberately from native execution:
 - An unavailable workflow-selected model follows the workflow model resolver's visible session-default behavior; there is no backend fallback.
 
 Protocol v1 can report only aggregate tokens. The runtime preserves that total and marks unavailable input/output/cache/cost dimensions unknown; it never fabricates a split or cost. Provider diagnostics, bridge acknowledgement, output paths, review fields, and provider-discovery reports are observations only. They are not authentication, authorization, operator approval, or acceptance evidence.
+
+Resume keys bind delegated calls to the reviewed provider identity, package metadata, and protocol. Compatible extension reloads preserve cached analysis, while provider/package/protocol drift fails negotiation or changes the resume identity. Journal replay marks analysis text as replayed, strips cached `effects`, and warns that filesystem effects were not revalidated. Cached text is never proof that a mutation or worktree still exists.
 
 ## Observe and recover
 

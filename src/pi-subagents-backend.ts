@@ -39,6 +39,8 @@ export interface PiSubagentsDiagnosticDetails {
   acceptance?: unknown;
   review?: unknown;
   effects?: unknown;
+  /** True only for journal replay; cached text is not fresh effect evidence. */
+  replayed?: boolean;
   error?: string;
   recoveryHint?: string;
 }
@@ -306,6 +308,12 @@ export class PiSubagentsBackend {
     }
     validateRequestedFields(this.negotiated.descriptor, options);
     return this.negotiated.descriptor;
+  }
+
+  /** Stable identity for resume across compatible provider reloads. */
+  executionIdentity(options: Pick<PiSubagentsRunOptions, "model" | "timeoutMs"> = {}): string {
+    const descriptor = this.negotiate(options);
+    return `${descriptor.providerId}@${descriptor.packageVersion}:v${PI_SUBAGENTS_PROTOCOL_VERSION}`;
   }
 
   run(prompt: string, options: PiSubagentsRunOptions): Promise<string> {
