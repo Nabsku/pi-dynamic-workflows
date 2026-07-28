@@ -5,7 +5,9 @@ import { join } from "node:path";
 import test from "node:test";
 import { createEventBus, type EventBus } from "@earendil-works/pi-coding-agent";
 import { WorkflowError, WorkflowErrorCode } from "../src/errors.js";
+import { createWorkflowControlTool } from "../src/workflow-control-tool.js";
 import { WorkflowManager } from "../src/workflow-manager.js";
+import { createWorkflowTool } from "../src/workflow-tool.js";
 import { withFakeHomeAsync } from "./helpers/fake-home.js";
 
 type BridgeParams = Record<string, unknown>;
@@ -107,29 +109,43 @@ test(
   "background workflow returns ownership immediately and settles through the same provider lifecycle",
   withHarness(async ({ cwd, bus, manager }) => {
     let release!: () => void;
+    let childSettled = false;
     const child = new Promise<void>((resolve) => (release = resolve));
     const registration = registerPromptTemplateDelegationBridge({
       events: bus,
       getContext: () => ({ cwd }),
       execute: async () => {
         await child;
+        childSettled = true;
         return completed("background-ok");
       },
       executeVersioned: async () => {
         await child;
+        childSettled = true;
         return completed("background-ok");
       },
     });
     try {
-      const started = manager.startInBackground(delegatedScript);
-      assert.equal(manager.getRun(started.runId)?.background, true);
-      assert.equal(manager.getRun(started.runId)?.status, "running");
-      const parentContextStillRuns = "parent-continued";
-      assert.equal(parentContextStillRuns, "parent-continued");
+      const tool = createWorkflowTool({ cwd, manager });
+      const toolResult = await (tool.execute as any)(
+        "background-call",
+        { script: delegatedScript },
+        undefined,
+        undefined,
+        undefined,
+      );
+      const details = toolResult.details as { runId: string; background: boolean };
+      assert.equal(details.background, true);
+      assert.equal(manager.getRun(details.runId)?.background, true);
+      assert.equal(manager.getRun(details.runId)?.status, "running");
+      assert.equal(childSettled, false, "workflow tool did not return control before the child settled");
       release();
-      const result = await started.promise;
-      assert.equal(JSON.stringify(result.result), JSON.stringify({ value: "background-ok" }));
-      assert.equal(manager.getRun(started.runId)?.status, "completed");
+      await waitFor(() => manager.getRun(details.runId)?.status === "completed", "background run did not settle");
+      assert.equal(childSettled, true);
+      assert.equal(
+        JSON.stringify((manager.getRun(details.runId)?.result as { result?: unknown } | undefined)?.result),
+        JSON.stringify({ value: "background-ok" }),
+      );
     } finally {
       registration.dispose();
     }
@@ -200,7 +216,15 @@ test(
     try {
       const started = manager.startInBackground(delegatedScript);
       await waitFor(() => providerStarted, "child did not start");
-      assert.equal(manager.stop(started.runId), true);
+      const control = createWorkflowControlTool({ manager });
+      const controlResult = await (control.execute as any)(
+        "stop-call",
+        { action: "stop", runId: started.runId },
+        undefined,
+        undefined,
+        undefined,
+      );
+      assert.equal(controlResult.details.result, "stopped");
       await assert.rejects(started.promise, (error: unknown) => {
         assert.ok(error instanceof WorkflowError);
         assert.equal(error.code, WorkflowErrorCode.WORKFLOW_ABORTED);
