@@ -83,6 +83,10 @@ class PiSubagentsExecutionBackend implements AgentExecutionBackend {
   }
 
   private requestedModel(options: Pick<AgentRunOptions, "model" | "tier">): string | undefined {
+    // An unqualified delegated role keeps pi-subagents' configured model. The
+    // workflow layer folds explicit and resolved phase routes into model, while
+    // tier remains explicit here, so only those caller-owned routes resolve.
+    if (!options.model && !options.tier) return undefined;
     return resolveAgentModelSpec(options, this.options.mainModel, () => this.loadTierConfig());
   }
 

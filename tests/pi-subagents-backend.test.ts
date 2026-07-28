@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { createEventBus, type EventBus } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_SUBAGENT_DELEGATION_PROVIDER, registerSubagentDelegationProvider } from "pi-subagents/delegation";
@@ -92,6 +95,37 @@ return await agent('inspect', { backend: 'pi-subagents', agentType: 'reviewer' }
   );
 
   assert.equal(result.result, "isolated");
+});
+
+test("runWorkflow leaves implicit configured-medium model selection to the delegated role", async () => {
+  const home = mkdtempSync(join(tmpdir(), "pi-dw-delegated-model-"));
+  const previousHome = process.env.HOME;
+  process.env.HOME = home;
+  mkdirSync(join(home, ".pi/workflows"), { recursive: true });
+  writeFileSync(
+    join(home, ".pi/workflows/model-tiers.json"),
+    JSON.stringify({ tiers: { medium: "vendor/configured-medium" } }),
+    { encoding: "utf8", flag: "wx" },
+  );
+  const bus = reviewedBus();
+  let request: any;
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
+    request = raw;
+    bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(raw.requestId));
+  });
+
+  try {
+    await runWorkflow(
+      `export const meta = { name: 'delegated_role_model', description: 'preserve delegated role model' }
+return await agent('inspect', { backend: 'pi-subagents', agentType: 'reviewer' })`,
+      { cwd: "/repo", piSubagentsEvents: bus, persistLogs: false },
+    );
+    assert.equal(Object.hasOwn(request, "model"), false);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("pi-subagents backend sends only protocol v1 and maps start/update/usage/history/diagnostics", async () => {
