@@ -701,6 +701,47 @@ test(
 );
 
 test(
+  "runSync persists canonical delegated diagnostics and usage provenance for cold detail views",
+  withTempCwd(async (cwd) => {
+    const diagnostics = {
+      backend: "pi-subagents" as const,
+      provider: {
+        id: "pi-subagents/prompt-template-bridge" as const,
+        package: "pi-subagents" as const,
+        protocolVersion: 1 as const,
+        status: "completed" as const,
+        role: "reviewer",
+        model: "provider/role-model",
+        modelPrecedence: "provider-role" as const,
+        usageProvenance: "pi-subagents-v1" as const,
+        runId: "provider-run",
+        durationMs: 44,
+        turns: 2,
+        toolCount: 1,
+      },
+    };
+    const manager = new WorkflowManager({
+      cwd,
+      agent: {
+        async run(_prompt: string, options: any) {
+          options.onDiagnostics?.(diagnostics);
+          options.onUsage?.({ total: 17, provenance: "pi-subagents-v1" });
+          return "delegated result";
+        },
+      } as never,
+    });
+
+    const result = await manager.runSync(oneAgentScript);
+    assert.ok(result.runId);
+    assert.deepEqual(manager.getRun(result.runId)?.snapshot.agents[0]?.diagnostics, diagnostics);
+    const coldManager = new WorkflowManager({ cwd, agent: fakeAgent() as never });
+    const persisted = coldManager.listRuns().find((run) => run.runId === result.runId);
+    assert.deepEqual(persisted?.agents[0]?.diagnostics, diagnostics);
+    assert.equal(persisted?.tokenUsage?.provenance, "pi-subagents-v1");
+  }),
+);
+
+test(
   "cold persisted resumable runs restore full agent results from the journal",
   withTempCwd(async (cwd) => {
     const expected = {

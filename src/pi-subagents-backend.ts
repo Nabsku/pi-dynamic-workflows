@@ -18,11 +18,30 @@ export const PI_SUBAGENTS_RESPONSE_EVENT = "prompt-template:subagent:response";
 export const PI_SUBAGENTS_CANCEL_EVENT = "prompt-template:subagent:cancel";
 
 export interface PiSubagentsDiagnosticDetails {
-  runId?: string;
-  model?: string;
-  outputPath?: string;
-  sessionFile?: string;
-  warnings?: string[];
+  backend: "pi-subagents";
+  provider: {
+    id: typeof PI_SUBAGENTS_PROVIDER_ID;
+    package: typeof PI_SUBAGENTS_PROVIDER_PACKAGE;
+    protocolVersion: typeof PI_SUBAGENTS_PROTOCOL_VERSION;
+    status: SubagentDelegationStatus;
+    role: string;
+    model?: string;
+    modelPrecedence: "explicit" | "tier-or-phase" | "provider-role";
+    usageProvenance?: "pi-subagents-v1";
+    runId?: string;
+    outputPath?: string;
+    sessionFile?: string;
+    warnings?: string[];
+    durationMs?: number;
+    turns?: number;
+    toolCount?: number;
+    execution?: unknown;
+    acceptance?: unknown;
+    review?: unknown;
+    effects?: unknown;
+    error?: string;
+    recoveryHint?: string;
+  };
 }
 
 export interface PiSubagentsRunOptions {
@@ -38,6 +57,7 @@ export interface PiSubagentsRunOptions {
   onUsage?: (usage: AgentUsage) => void;
   onHistory?: (history: AgentHistoryEntry[]) => void;
   onDiagnostics?: (details: PiSubagentsDiagnosticDetails) => void;
+  modelPrecedence?: PiSubagentsDiagnosticDetails["provider"]["modelPrecedence"];
 }
 
 type SubagentDelegationStatus =
@@ -109,6 +129,32 @@ const MAX_PROGRESS_CHARS = 262_144;
 const MAX_PROGRESS_HISTORY = 32;
 const MAX_WARNING_COUNT = 50;
 const MAX_FINAL_OUTPUT_CHARS = 1_000_000;
+
+function sanitizeDiagnosticText(value: string): string {
+  const controlsRemoved = [...value]
+    .map((character) => {
+      const code = character.charCodeAt(0);
+      return (code < 32 && code !== 9 && code !== 10 && code !== 13) || code === 127 ? "�" : character;
+    })
+    .join("");
+  return controlsRemoved
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, "[redacted-token]")
+    .replace(/\b(api[_ -]?key|token|password)\s*[:=]\s*\S+/gi, "$1=[redacted]");
+}
+
+function recoveryHint(status: SubagentDelegationStatus): string | undefined {
+  if (status === "completed") return undefined;
+  if (status === "timed_out") return "Retry with a larger timeout or a smaller delegated task.";
+  if (status === "cancelled" || status === "interrupted") return "Retry when cancellation is no longer requested.";
+  if (status === "turn_budget_exhausted" || status === "tool_budget_exhausted")
+    return "Reduce the delegated scope or raise the corresponding pi-subagents budget.";
+  if (status === "structured_output_failed") return "Retry without structured output or correct the requested schema.";
+  if (status === "acceptance_failed") return "Inspect the acceptance metadata and address the rejected evidence.";
+  if (status === "invalid_request") return 'Correct the delegated request or select backend "native".';
+  if (status === "unavailable_context") return 'Make the required context available or select backend "native".';
+  return 'Inspect the provider error and retry, or select backend "native".';
+}
 
 const STARTED_FIELDS = new Set(["version", "requestId"]);
 const UPDATE_FIELDS = new Set([
@@ -554,11 +600,32 @@ export class PiSubagentsBackend {
           acknowledgeBridge();
           const status = terminal.status;
           const details: PiSubagentsDiagnosticDetails = {
-            ...(typeof terminal.runId === "string" ? { runId: terminal.runId } : {}),
-            ...(typeof terminal.model === "string" ? { model: terminal.model } : {}),
-            ...(typeof terminal.outputPath === "string" ? { outputPath: terminal.outputPath } : {}),
-            ...(typeof terminal.sessionFile === "string" ? { sessionFile: terminal.sessionFile } : {}),
-            ...(warnings ? { warnings: warnings as string[] } : {}),
+            backend: "pi-subagents",
+            provider: {
+              id: PI_SUBAGENTS_PROVIDER_ID,
+              package: PI_SUBAGENTS_PROVIDER_PACKAGE,
+              protocolVersion: PI_SUBAGENTS_PROTOCOL_VERSION,
+              status,
+              role: options.agentType ?? "delegate",
+              modelPrecedence: options.modelPrecedence ?? (options.model ? "explicit" : "provider-role"),
+              ...(typeof terminal.model === "string" ? { model: terminal.model } : {}),
+              ...(typeof terminal.tokens === "number" ? { usageProvenance: "pi-subagents-v1" as const } : {}),
+              ...(typeof terminal.runId === "string" ? { runId: terminal.runId } : {}),
+              ...(typeof terminal.outputPath === "string" ? { outputPath: terminal.outputPath } : {}),
+              ...(typeof terminal.sessionFile === "string" ? { sessionFile: terminal.sessionFile } : {}),
+              ...(warnings
+                ? { warnings: (warnings as string[]).map((warning) => sanitizeDiagnosticText(warning)) }
+                : {}),
+              ...(typeof terminal.durationMs === "number" ? { durationMs: terminal.durationMs } : {}),
+              ...(typeof terminal.turns === "number" ? { turns: terminal.turns } : {}),
+              ...(typeof terminal.toolCount === "number" ? { toolCount: terminal.toolCount } : {}),
+              ...(terminal.execution !== undefined ? { execution: terminal.execution } : {}),
+              ...(terminal.acceptance !== undefined ? { acceptance: terminal.acceptance } : {}),
+              ...(terminal.review !== undefined ? { review: terminal.review } : {}),
+              ...(terminal.effects !== undefined ? { effects: terminal.effects } : {}),
+              ...(typeof terminal.error === "string" ? { error: sanitizeDiagnosticText(terminal.error) } : {}),
+              ...(recoveryHint(status) ? { recoveryHint: recoveryHint(status) } : {}),
+            },
           };
           options.onDiagnostics?.(details);
           if (typeof terminal.model === "string") options.onModelResolved?.(terminal.model);

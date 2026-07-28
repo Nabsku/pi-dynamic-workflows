@@ -376,6 +376,7 @@ function persistedToSnapshot(p: PersistedRunState): WorkflowSnapshot {
       tokens: a.tokens,
       tokenUsage: a.tokenUsage,
       model: a.model,
+      diagnostics: a.diagnostics,
     };
   });
   return {
@@ -988,6 +989,38 @@ function renderSinglePane(
 }
 
 /** Build the lines for the current view. Pure: depends only on state + model + theme. */
+function renderDelegatedDiagnostics(a: WorkflowAgentSnapshot, dim: (text: string) => string): string[] {
+  const diagnostics = a.diagnostics;
+  if (diagnostics?.backend !== "pi-subagents") return [];
+  const p = diagnostics.provider;
+  const lines = [
+    dim("Backend: ") + diagnostics.backend,
+    dim("Provider role: ") + asText(p.role),
+    dim("Model precedence: ") + asText(p.modelPrecedence),
+    dim("Provider status: ") + asText(p.status),
+  ];
+  if (p.model) lines.push(dim("Bridge model: ") + asText(p.model));
+  if (p.usageProvenance) lines.push(dim("Usage provenance: ") + asText(p.usageProvenance));
+  if (p.runId) lines.push(dim("Provider run: ") + asText(p.runId));
+  if (p.outputPath) lines.push(dim("Output: ") + asText(p.outputPath));
+  if (p.sessionFile) lines.push(dim("Session: ") + asText(p.sessionFile));
+  if (p.durationMs !== undefined) lines.push(`${dim("Duration: ")}${p.durationMs}ms`);
+  if (p.turns !== undefined) lines.push(dim("Turns: ") + String(p.turns));
+  if (p.toolCount !== undefined) lines.push(dim("Tool calls: ") + String(p.toolCount));
+  if (p.error) lines.push(dim("Provider error: ") + asText(p.error));
+  if (p.recoveryHint) lines.push(dim("Recovery: ") + asText(p.recoveryHint));
+  for (const warning of p.warnings ?? []) lines.push(dim("Warning: ") + asText(warning));
+  for (const [label, value] of [
+    ["Execution", p.execution],
+    ["Acceptance", p.acceptance],
+    ["Review", p.review],
+    ["Effects", p.effects],
+  ] as const) {
+    if (value !== undefined) lines.push(dim(`${label}: `) + asText(JSON.stringify(value)));
+  }
+  return lines;
+}
+
 export function renderNavigator(
   state: NavigatorState,
   model: NavigatorModel,
@@ -1118,6 +1151,7 @@ function renderNavigatorFrame(
         if (a.errorCode) {
           body.push(`${dim("Error code: ")}${asText(a.errorCode)}${a.recoverable ? " (recoverable)" : ""}`);
         }
+        body.push(...renderDelegatedDiagnostics(a, dim));
         body.push("", theme.fg("accent", theme.bold("Prompt:")));
         body.push(...renderMarkdownLines(asText(a.prompt ?? ""), width, markdownTheme, renderCache));
         body.push("", theme.fg("accent", theme.bold("Result:")));
@@ -1143,6 +1177,7 @@ function renderNavigatorFrame(
         if (a.errorCode) {
           body.push(`${dim("Error code: ")}${asText(a.errorCode)}${a.recoverable ? " (recoverable)" : ""}`);
         }
+        body.push(...renderDelegatedDiagnostics(a, dim));
         body.push("", theme.fg("accent", theme.bold("Prompt:")));
         const promptLines = renderMarkdownLines(asText(a.prompt ?? ""), width, markdownTheme, renderCache);
         body.push(...promptLines.slice(0, 5));

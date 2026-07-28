@@ -86,6 +86,26 @@ function errorDetailManager(): Pick<WorkflowManager, "listRuns" | "getRun"> {
         error: "Subagent produced no assistant output",
         errorCode: WorkflowErrorCode.AGENT_EMPTY_OUTPUT,
         recoverable: true,
+        diagnostics: {
+          backend: "pi-subagents",
+          provider: {
+            id: "pi-subagents/prompt-template-bridge",
+            package: "pi-subagents",
+            protocolVersion: 1,
+            status: "acceptance_failed",
+            role: "reviewer",
+            model: "vendor/reviewer",
+            modelPrecedence: "provider-role",
+            usageProvenance: "pi-subagents-v1",
+            runId: "provider-run",
+            durationMs: 125,
+            turns: 2,
+            toolCount: 1,
+            acceptance: { status: "rejected" },
+            error: "acceptance evidence missing",
+            recoveryHint: "Inspect the acceptance metadata and address the rejected evidence.",
+          },
+        },
         history: [
           { role: "assistant", kind: "toolCall", toolName: "read", text: '{"file":"README.md"}' },
           { role: "tool", kind: "toolResult", toolName: "read", text: "README content" },
@@ -711,9 +731,19 @@ test("renderNavigator shows agent error diagnostics in detail view", () => {
   assert.match(text, /Subagent produced no assistant output/);
   assert.match(text, /Error code:/);
   assert.match(text, /AGENT_EMPTY_OUTPUT \(recoverable\)/);
-  assert.match(text, /Recent activity:/);
-  assert.match(text, /assistant tool read:\n\s+\{"file":"README.md"\}/);
-  assert.match(text, /tool read:\nREADME content/);
+  assert.match(text, /Backend:.*pi-subagents/);
+  assert.match(text, /Provider role:.*reviewer/);
+  assert.match(text, /Model precedence:.*provider-role/);
+  assert.match(text, /Bridge model:.*vendor\/reviewer/);
+  assert.match(text, /Usage provenance:.*pi-subagents-v1/);
+  assert.match(text, /Recovery:.*Inspect the acceptance metadata/);
+  assert.match(text, /Acceptance:.*rejected/);
+  state.togglePager();
+  state.jump("end", 0);
+  const pager = renderNavigator(state, model, 80).join("\n");
+  assert.match(pager, /History:/);
+  assert.match(pager, /assistant tool read:\n\s+\{"file":"README.md"\}/);
+  assert.match(pager, /tool read:\nREADME content/);
 });
 
 test("renderNavigator shows model info in agent rows", () => {

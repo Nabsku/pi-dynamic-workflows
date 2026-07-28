@@ -488,6 +488,8 @@ export interface AgentRunOptions<TSchemaDef extends TSchema | undefined = undefi
   timeoutMs?: number | null;
   /** Diagnostic paths/ids returned by pi-subagents v1. */
   onDiagnostics?: (details: PiSubagentsDiagnosticDetails) => void;
+  /** Internal provenance for a delegated model request assembled by workflow.ts. */
+  modelPrecedence?: PiSubagentsDiagnosticDetails["provider"]["modelPrecedence"];
 }
 
 export type AgentRunResult<TSchemaDef extends TSchema | undefined> = TSchemaDef extends TSchema
@@ -813,6 +815,8 @@ export class WorkflowAgent {
         onUsage: options.onUsage,
         onHistory: options.onHistory,
         onDiagnostics: options.onDiagnostics,
+        modelPrecedence:
+          options.modelPrecedence ?? (options.model ? "explicit" : options.tier ? "tier-or-phase" : "provider-role"),
       })) as AgentRunResult<TSchemaDef>;
     }
 

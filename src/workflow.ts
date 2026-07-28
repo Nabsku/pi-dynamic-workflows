@@ -18,7 +18,11 @@ import { DEFAULT_AGENT_TIMEOUT_MS, MAX_AGENT_RETRIES, MAX_AGENTS_PER_RUN, MAX_CO
 import { WorkflowError, WorkflowErrorCode, wrapError } from "./errors.js";
 import { createWorkflowLogger } from "./logger.js";
 import { parseModelRoutingFromMeta, resolveModelForPhase } from "./model-routing.js";
-import { PI_SUBAGENTS_PROTOCOL_VERSION, PI_SUBAGENTS_REVIEWED_COMMIT } from "./pi-subagents-backend.js";
+import {
+  PI_SUBAGENTS_PROTOCOL_VERSION,
+  PI_SUBAGENTS_REVIEWED_COMMIT,
+  type PiSubagentsDiagnosticDetails,
+} from "./pi-subagents-backend.js";
 import { createAgentStoreTools, SharedStore } from "./shared-store.js";
 import { WORKFLOW_CAPABILITY_CONTRACT, type WorkflowRuntimeImplementations } from "./workflow-capability-contract.js";
 import { createWorktree, removeWorktree, type Worktree } from "./worktree.js";
@@ -77,6 +81,7 @@ export interface JournalEntry {
   /** sha256 of the call's identity (prompt + model + phase + agentType + schema). */
   hash: string;
   result: unknown;
+  diagnostics?: PiSubagentsDiagnosticDetails;
   /**
    * Per-agent write delta (keys set by this agent) for additive replay on resume.
    * Replaces the former full-map snapshot to fix parallel-agent ordering: applying
@@ -260,6 +265,7 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
     error?: string;
     errorCode?: WorkflowErrorCode;
     recoverable?: boolean;
+    diagnostics?: PiSubagentsDiagnosticDetails;
   }) => void;
   onAgentHistory?: (event: { id: string; label: string; phase?: string; history: AgentHistoryEntry[] }) => void;
   onTokenUsage?: (usage: AgentUsage) => void;
@@ -610,6 +616,11 @@ export async function runWorkflow<T = unknown>(
     const explicitModel = agentOptions.model ?? agentDef?.model;
     const modelSpec =
       explicitModel ?? (agentOptions.tier ? undefined : resolveModelForPhase(assignedPhase, routingConfig));
+    const delegatedModelPrecedence = agentOptions.model
+      ? "explicit"
+      : agentOptions.tier || modelSpec
+        ? "tier-or-phase"
+        : "provider-role";
     // For display in /workflows: the model this agent runs on — its explicit/phase
     // spec, else the session's main model. The real resolved id overrides this via
     // onModelResolved once the subagent session is created.
@@ -721,6 +732,7 @@ export async function runWorkflow<T = unknown>(
       // estimate when the provider reports no usage (total === 0). Usage is reset
       // per retry attempt so a failed attempt does not double-count the next one.
       let usage: AgentUsage | undefined;
+      let diagnostics: PiSubagentsDiagnosticDetails | undefined;
       const recordTokens = (result: unknown): number => {
         const tokens = usage && usage.total > 0 ? usage.total : estimateTokens(result) + estimateTokens(prompt);
         if (usage) {
@@ -754,6 +766,7 @@ export async function runWorkflow<T = unknown>(
           let onExternalAbort: (() => void) | undefined;
           let onRunFatal: (() => void) | undefined;
           try {
+            diagnostics = undefined;
             throwIfAborted();
             // This agent's own fan-out already breached maxAgents while this
             // call sat queued behind the limiter; bail before spending on the
@@ -804,6 +817,7 @@ export async function runWorkflow<T = unknown>(
               backend: agentOptions.backend,
               agentType: agentOptions.agentType,
               timeoutMs: timeout,
+              modelPrecedence: delegatedModelPrecedence,
               onModelResolved: (id: string) => {
                 displayModel = id;
               },
@@ -816,6 +830,9 @@ export async function runWorkflow<T = unknown>(
               },
               onHistory: (history: AgentHistoryEntry[]) => {
                 options.onAgentHistory?.({ id: deltaKey, label, phase: assignedPhase, history });
+              },
+              onDiagnostics: (details) => {
+                diagnostics = details;
               },
             });
             // After a timeout the run() promise still settles later, rejecting with
@@ -839,6 +856,7 @@ export async function runWorkflow<T = unknown>(
               hash: callHash,
               result,
               storeDelta: store.commitDelta(deltaKey),
+              diagnostics,
             });
             options.onAgentEnd?.({
               id: deltaKey,
@@ -849,6 +867,7 @@ export async function runWorkflow<T = unknown>(
               tokenUsage: usage,
               worktree: runCwd,
               model: displayModel,
+              diagnostics,
             });
             return result;
           } catch (error) {
@@ -893,6 +912,7 @@ export async function runWorkflow<T = unknown>(
               error: workflowError.message,
               errorCode: workflowError.code,
               recoverable: workflowError.recoverable,
+              diagnostics,
             });
 
             if (workflowError.recoverable) {

@@ -2,6 +2,7 @@ import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { AgentUsage } from "./agent.js";
 import type { AgentHistoryEntry } from "./agent-history.js";
 import type { WorkflowErrorCode } from "./errors.js";
+import type { PiSubagentsDiagnosticDetails } from "./pi-subagents-backend.js";
 import type { WorkflowMeta } from "./workflow.js";
 
 export type WorkflowAgentStatus = "queued" | "running" | "done" | "error" | "skipped";
@@ -27,6 +28,8 @@ export interface WorkflowAgentSnapshot {
   tokenUsage?: AgentUsage;
   /** The model this agent ran on (provider/id), when known. */
   model?: string;
+  /** Canonical terminal facts from the explicitly selected delegated backend. */
+  diagnostics?: PiSubagentsDiagnosticDetails;
 }
 
 export interface WorkflowSnapshot {

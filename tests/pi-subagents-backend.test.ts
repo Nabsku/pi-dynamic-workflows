@@ -149,6 +149,15 @@ test("pi-subagents backend sends only protocol v1 and maps start/update/usage/hi
         tokens: 21,
         sessionFile: "/tmp/session.jsonl",
         outputPath: "/tmp/output.md",
+        runId: "provider-run-1",
+        durationMs: 1234,
+        turns: 3,
+        toolCount: 2,
+        execution: { status: "completed", success: true, exitCode: 0 },
+        acceptance: { status: "checked", evidenceStatus: "checked", explicit: true },
+        review: { status: "not-requested" },
+        effects: { fileMutation: { status: "not-applicable", expected: false, attempted: false } },
+        warnings: ["Bearer secret-token", "apiKey=private-value"],
       }),
     );
   });
@@ -178,9 +187,28 @@ test("pi-subagents backend sends only protocol v1 and maps start/update/usage/hi
   assert.deepEqual(usages.at(-1), { total: 21, provenance: "pi-subagents-v1" });
   assert.ok(histories.flat().some((h: any) => h.text.includes("working")));
   assert.deepEqual(diagnostics.at(-1), {
-    model: "vendor/resolved",
-    sessionFile: "/tmp/session.jsonl",
-    outputPath: "/tmp/output.md",
+    backend: "pi-subagents",
+    provider: {
+      id: "pi-subagents/prompt-template-bridge",
+      package: "pi-subagents",
+      protocolVersion: 1,
+      status: "completed",
+      role: "delegate",
+      model: "vendor/resolved",
+      modelPrecedence: "explicit",
+      usageProvenance: "pi-subagents-v1",
+      runId: "provider-run-1",
+      sessionFile: "/tmp/session.jsonl",
+      outputPath: "/tmp/output.md",
+      durationMs: 1234,
+      turns: 3,
+      toolCount: 2,
+      execution: { status: "completed", success: true, exitCode: 0 },
+      acceptance: { status: "checked", evidenceStatus: "checked", explicit: true },
+      review: { status: "not-requested" },
+      effects: { fileMutation: { status: "not-applicable", expected: false, attempted: false } },
+      warnings: ["Bearer [redacted]", "apiKey=[redacted]"],
+    },
   });
   assert.equal(count(), 1, "only the test request listener remains");
 });
