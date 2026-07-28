@@ -24,4 +24,6 @@ When JavaScript reads fields, pass a small plain JSON Schema. Schema noncomplian
 
 Selector priority is explicit `model` > `agentType` model > `tier` > phase model > metadata model > implicit `medium` > session default. An unavailable selected route falls directly to the session default. Use exact `model`, nonstandard `tier`, or `agentType` only when context supplies its name and purpose. Worktree isolation is best-effort. See [registry ownership](registry-ownership.md).
 
+Native execution is the default. Before explicitly selecting `backend: "pi-subagents"`, read its [fork-only support and trust boundary](pi-subagents-backend.md); delegated roles and model precedence intentionally differ from native routing.
+
 Generated entries marked `supported` are authoring API. `console` and whole-script Markdown fences are compatibility-only. VM realm facilities are internal. Active model routes and agent types are dynamic. Use `log()` in new scripts.

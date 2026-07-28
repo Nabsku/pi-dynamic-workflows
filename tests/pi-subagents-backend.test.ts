@@ -569,3 +569,34 @@ test("WorkflowAgent delegates an explicit role without overriding its configured
   assert.match(request.task, /Task label: review gate/);
   assert.match(request.task, /inspect this/);
 });
+
+test("offline two-agent native and delegated smoke", async () => {
+  const bus = reviewedBus();
+  const delegated = new PiSubagentsBackend(bus);
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
+    bus.emit(PI_SUBAGENTS_STARTED_EVENT, { version: 1, requestId: raw.requestId });
+    bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(raw.requestId, { output: `delegated:${raw.task}` }));
+  });
+  const runner = {
+    preflight(options: any) {
+      if (options.backend === "pi-subagents") delegated.negotiate(options);
+    },
+    async run(prompt: string, options: any) {
+      if (options.backend === "pi-subagents") return delegated.run(prompt, { ...options, cwd: options.cwd ?? "/repo" });
+      return `native:${prompt}`;
+    },
+  };
+  const result = await runWorkflow(
+    `export const meta = { name: 'offline_backend_smoke', description: 'offline backend smoke' }
+const [native, delegated] = await parallel([
+  () => agent('alpha', { label: 'native' }),
+  () => agent('beta', { label: 'delegated', backend: 'pi-subagents', agentType: 'reviewer' }),
+])
+return { native, delegated }`,
+    { cwd: "/repo", agent: runner, concurrency: 2, persistLogs: false },
+  );
+
+  assert.equal((result.result as any).native, "native:alpha");
+  assert.equal((result.result as any).delegated, "delegated:beta");
+  assert.equal(result.agentCount, 2);
+});

@@ -33,6 +33,7 @@ const REQUIRED_RESOURCES = [
   `${SKILL_ROOT}/references/pattern-selection.md`,
   `${SKILL_ROOT}/references/focused-recipes.md`,
   `${SKILL_ROOT}/references/registry-ownership.md`,
+  `${SKILL_ROOT}/references/pi-subagents-backend.md`,
   `${SKILL_ROOT}/references/review.md`,
   `${SKILL_ROOT}/references/debugging.md`,
   `${SKILL_ROOT}/examples/classify-and-act.js`,
@@ -196,6 +197,23 @@ test("authoring guidance makes invocation token budgets explicit opt-in gates", 
   assert.match(lifecycle, /omitted `tokenBudget`.*configured `defaultTokenBudget`.*otherwise.*unlimited/is);
   assert.match(lifecycle, /soft pre-call gates.*concurrent work can overshoot/is);
   assert.doesNotMatch(lifecycle, /set finite bounds[^.]*`tokenBudget`/i);
+});
+
+test("authoring and operator guidance preserve the delegated backend boundary", () => {
+  const skill = readFileSync(join(ROOT, SKILL_ROOT, "SKILL.md"), "utf8");
+  const delegated = readFileSync(join(ROOT, SKILL_ROOT, "references/pi-subagents-backend.md"), "utf8");
+  const operator = readFileSync(join(ROOT, "docs/pi-subagents-backend.md"), "utf8");
+
+  assert.match(skill, /fork-only compatibility boundary/i);
+  for (const source of [delegated, operator]) {
+    assert.match(source, /native (?:execution )?remains the default/i);
+    assert.match(source, /no automatic selection or silent fallback/i);
+    assert.match(source, /not authentication, authorization.*approval/is);
+  }
+  assert.match(operator, /stock `pi-subagents@0\.35\.1`/);
+  assert.match(operator, /stock `pi-subagents@0\.37\.0`/);
+  assert.match(operator, /b77781ea926203b32af8fad439432e5cef2aae5f/);
+  assert.match(operator, /offline two-agent native and delegated smoke/);
 });
 
 test("generated facts cover the lifecycle constraints taught by the skill", () => {

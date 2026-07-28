@@ -88,6 +88,8 @@ return await agent(
 
 `backend: "pi-subagents"` is fork-only and uses the synchronous provider-discovery contract reviewed at [`Nabsku/pi-subagents@b77781ea926203b32af8fad439432e5cef2aae5f`](https://github.com/Nabsku/pi-subagents/commit/b77781ea926203b32af8fad439432e5cef2aae5f). Install and enable that exact commit separately when you use the opt-in backend. The workflow runtime verifies provider identity, package metadata, generation, protocol statuses, request fields, cancellation, and concurrency before reserving an agent slot; request acknowledgement remains a separate correlated lifecycle event. Published stock `pi-subagents` 0.35.1 and 0.37.0 fail closed because they do not expose provider discovery. No fork release or general peer-version range is implied.
 
+This remains an experimental read/report integration: native execution is still the default and there is no automatic selection or silent fallback. Follow the [fork-only install, verification, smoke, observation, and recovery guide](docs/pi-subagents-backend.md) before using it. EventBus provider and lifecycle reports are same-process compatibility data, not authentication, authorization, or approval evidence.
+
 ## Supported workflow capabilities
 
 The installed extension generates this compact index from its executable capability contract. Read the [workflow authoring guide](docs/workflow-authoring.md) or use the packaged `workflow-authoring` skill for constraints, lifecycle guidance, and adaptable examples; configured route and agent-type values remain environment-specific.
