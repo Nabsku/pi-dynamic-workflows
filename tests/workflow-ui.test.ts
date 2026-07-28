@@ -101,8 +101,11 @@ function errorDetailManager(): Pick<WorkflowManager, "listRuns" | "getRun"> {
             durationMs: 125,
             turns: 2,
             toolCount: 1,
-            acceptance: { status: "rejected" },
-            error: "acceptance evidence missing",
+            execution: { error: "Bearer nested-secret", detail: "execution retained" },
+            acceptance: { status: "rejected", reason: "password=hunter2 evidence missing" },
+            review: { comment: "token=reviewer-secret fix the evidence" },
+            effects: { warning: "apiKey=private-value mutation unknown" },
+            error: "acceptance evidence missing; apiKey=terminal-secret",
             recoveryHint: "Inspect the acceptance metadata and address the rejected evidence.",
           },
         },
@@ -738,6 +741,10 @@ test("renderNavigator shows agent error diagnostics in detail view", () => {
   assert.match(text, /Usage provenance:.*pi-subagents-v1/);
   assert.match(text, /Recovery:.*Inspect the acceptance metadata/);
   assert.match(text, /Acceptance:.*rejected/);
+  assert.match(text, /Execution:.*Bearer \[redacted\].*execution retained/);
+  assert.match(text, /Review:.*token=\[redacted\].*fix the evidence/);
+  assert.match(text, /Effects:.*apiKey=\[redacted\].*mutation unknown/);
+  assert.doesNotMatch(text, /nested-secret|hunter2|reviewer-secret|private-value|terminal-secret/);
   state.togglePager();
   state.jump("end", 0);
   const pager = renderNavigator(state, model, 80).join("\n");

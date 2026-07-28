@@ -130,7 +130,7 @@ const MAX_PROGRESS_HISTORY = 32;
 const MAX_WARNING_COUNT = 50;
 const MAX_FINAL_OUTPUT_CHARS = 1_000_000;
 
-function sanitizeDiagnosticText(value: string): string {
+export function sanitizePiSubagentsDiagnosticText(value: string): string {
   const controlsRemoved = [...value]
     .map((character) => {
       const code = character.charCodeAt(0);
@@ -141,6 +141,19 @@ function sanitizeDiagnosticText(value: string): string {
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
     .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, "[redacted-token]")
     .replace(/\b(api[_ -]?key|token|password)\s*[:=]\s*\S+/gi, "$1=[redacted]");
+}
+
+function sanitizeDiagnosticValue(value: unknown): unknown {
+  if (typeof value === "string") return sanitizePiSubagentsDiagnosticText(value);
+  if (Array.isArray(value)) return value.map((item) => sanitizeDiagnosticValue(item));
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitizeDiagnosticValue(item)]));
+  }
+  return value;
+}
+
+export function sanitizePiSubagentsDiagnostics(details: PiSubagentsDiagnosticDetails): PiSubagentsDiagnosticDetails {
+  return sanitizeDiagnosticValue(details) as PiSubagentsDiagnosticDetails;
 }
 
 function recoveryHint(status: SubagentDelegationStatus): string | undefined {
@@ -614,16 +627,20 @@ export class PiSubagentsBackend {
               ...(typeof terminal.outputPath === "string" ? { outputPath: terminal.outputPath } : {}),
               ...(typeof terminal.sessionFile === "string" ? { sessionFile: terminal.sessionFile } : {}),
               ...(warnings
-                ? { warnings: (warnings as string[]).map((warning) => sanitizeDiagnosticText(warning)) }
+                ? { warnings: (warnings as string[]).map((warning) => sanitizePiSubagentsDiagnosticText(warning)) }
                 : {}),
               ...(typeof terminal.durationMs === "number" ? { durationMs: terminal.durationMs } : {}),
               ...(typeof terminal.turns === "number" ? { turns: terminal.turns } : {}),
               ...(typeof terminal.toolCount === "number" ? { toolCount: terminal.toolCount } : {}),
-              ...(terminal.execution !== undefined ? { execution: terminal.execution } : {}),
-              ...(terminal.acceptance !== undefined ? { acceptance: terminal.acceptance } : {}),
-              ...(terminal.review !== undefined ? { review: terminal.review } : {}),
-              ...(terminal.effects !== undefined ? { effects: terminal.effects } : {}),
-              ...(typeof terminal.error === "string" ? { error: sanitizeDiagnosticText(terminal.error) } : {}),
+              ...(terminal.execution !== undefined ? { execution: sanitizeDiagnosticValue(terminal.execution) } : {}),
+              ...(terminal.acceptance !== undefined
+                ? { acceptance: sanitizeDiagnosticValue(terminal.acceptance) }
+                : {}),
+              ...(terminal.review !== undefined ? { review: sanitizeDiagnosticValue(terminal.review) } : {}),
+              ...(terminal.effects !== undefined ? { effects: sanitizeDiagnosticValue(terminal.effects) } : {}),
+              ...(typeof terminal.error === "string"
+                ? { error: sanitizePiSubagentsDiagnosticText(terminal.error) }
+                : {}),
               ...(recoveryHint(status) ? { recoveryHint: recoveryHint(status) } : {}),
             },
           };
@@ -649,7 +666,8 @@ export class PiSubagentsBackend {
             settle(() => resolve(output));
             return;
           }
-          const wireError = typeof terminal.error === "string" ? terminal.error : undefined;
+          const wireError =
+            typeof terminal.error === "string" ? sanitizePiSubagentsDiagnosticText(terminal.error) : undefined;
           const message = terminalMessage(status, wireError);
           const limit = classifyProviderLimit(message);
           if (limit.matched) {

@@ -428,6 +428,43 @@ test("pi-subagents backend fails closed when unavailable, unaccepted, invalid, o
   }
 });
 
+test("pi-subagents backend sanitizes terminal and nested diagnostics before exposing a failure", async () => {
+  const bus = reviewedBus();
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
+    bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, {
+      version: 1,
+      requestId: raw.requestId,
+      status: "acceptance_failed",
+      error: "apiKey=private-value useful acceptance detail",
+      execution: { error: "Bearer nested-secret", detail: ["token=inner-token", { note: "execution retained" }] },
+      acceptance: { reason: "password=hunter2 evidence missing" },
+      review: { comment: "token: reviewer-secret fix the evidence" },
+      effects: { warning: "api_key=effects-secret mutation unknown" },
+    });
+  });
+
+  await assert.rejects(new PiSubagentsBackend(bus).run("task", { cwd: "/repo" }), (error: unknown) => {
+    assert.ok(error instanceof WorkflowError);
+    const exposed = JSON.stringify({ message: error.message, details: error.details });
+    for (const secret of [
+      "private-value",
+      "nested-secret",
+      "inner-token",
+      "hunter2",
+      "reviewer-secret",
+      "effects-secret",
+    ]) {
+      assert.doesNotMatch(exposed, new RegExp(secret));
+    }
+    assert.match(error.message, /apiKey=\[redacted\] useful acceptance detail/);
+    assert.match(exposed, /execution retained/);
+    assert.match(exposed, /fix the evidence/);
+    assert.match(exposed, /mutation unknown/);
+    assert.match(exposed, /\[redacted\]/);
+    return true;
+  });
+});
+
 test("pi-subagents backend rejects completed responses with empty or malformed output", async () => {
   for (const output of [undefined, "", "   "]) {
     const bus = reviewedBus();

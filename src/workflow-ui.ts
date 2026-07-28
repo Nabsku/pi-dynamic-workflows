@@ -26,6 +26,7 @@ import { Markdown, parseKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } f
 import type { AgentUsage } from "./agent.js";
 import type { ThemeLike, WorkflowAgentSnapshot, WorkflowSnapshot } from "./display.js";
 import { aggregateAgentUsage, fmtCost, fmtTokenSegment, tokenFigures } from "./display.js";
+import { sanitizePiSubagentsDiagnostics, sanitizePiSubagentsDiagnosticText } from "./pi-subagents-backend.js";
 import type { PersistedRunState } from "./run-persistence.js";
 import { registerSavedWorkflow } from "./saved-commands.js";
 import type { WorkflowManager } from "./workflow-manager.js";
@@ -990,7 +991,7 @@ function renderSinglePane(
 
 /** Build the lines for the current view. Pure: depends only on state + model + theme. */
 function renderDelegatedDiagnostics(a: WorkflowAgentSnapshot, dim: (text: string) => string): string[] {
-  const diagnostics = a.diagnostics;
+  const diagnostics = a.diagnostics && sanitizePiSubagentsDiagnostics(a.diagnostics);
   if (diagnostics?.backend !== "pi-subagents") return [];
   const p = diagnostics.provider;
   const lines = [
@@ -1019,6 +1020,11 @@ function renderDelegatedDiagnostics(a: WorkflowAgentSnapshot, dim: (text: string
     if (value !== undefined) lines.push(dim(`${label}: `) + asText(JSON.stringify(value)));
   }
   return lines;
+}
+
+function renderedAgentError(a: WorkflowAgentSnapshot): string | undefined {
+  if (!a.error) return undefined;
+  return a.diagnostics?.backend === "pi-subagents" ? sanitizePiSubagentsDiagnosticText(a.error) : a.error;
 }
 
 export function renderNavigator(
@@ -1147,7 +1153,7 @@ function renderNavigatorFrame(
       if (state.pagerOpen) {
         body.push(dim("Status: ") + asText(a.status ?? ""));
         if (a.model) body.push(dim("Model: ") + (shortModel(a.model) ?? ""));
-        if (a.error) body.push(dim("Error: ") + asText(a.error));
+        if (renderedAgentError(a)) body.push(dim("Error: ") + asText(renderedAgentError(a)));
         if (a.errorCode) {
           body.push(`${dim("Error code: ")}${asText(a.errorCode)}${a.recoverable ? " (recoverable)" : ""}`);
         }
@@ -1173,7 +1179,7 @@ function renderNavigatorFrame(
         // Active/failed agents default to context plus the latest two events.
         body.push(dim("Status: ") + asText(a.status ?? ""));
         if (a.model) body.push(dim("Model: ") + (shortModel(a.model) ?? ""));
-        if (a.error) body.push(dim("Error: ") + asText(a.error));
+        if (renderedAgentError(a)) body.push(dim("Error: ") + asText(renderedAgentError(a)));
         if (a.errorCode) {
           body.push(`${dim("Error code: ")}${asText(a.errorCode)}${a.recoverable ? " (recoverable)" : ""}`);
         }

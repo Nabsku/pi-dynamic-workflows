@@ -7,6 +7,7 @@ import type { EventBus, ModelRegistry, ToolDefinition } from "@earendil-works/pi
 import type { AgentUsage, WorkflowAgent } from "./agent.js";
 import { preview, type WorkflowAgentSnapshot, type WorkflowSnapshot } from "./display.js";
 import { isProviderUsageLimit, WorkflowError, WorkflowErrorCode } from "./errors.js";
+import { sanitizePiSubagentsDiagnostics, sanitizePiSubagentsDiagnosticText } from "./pi-subagents-backend.js";
 import {
   createRunPersistence,
   generateRunId,
@@ -733,13 +734,16 @@ export class WorkflowManager extends EventEmitter {
             // continue to use resultPreview.
             agent.result = event.result;
             agent.resultPreview = preview(event.result);
-            agent.error = event.error;
+            agent.error =
+              event.diagnostics?.backend === "pi-subagents" && event.error
+                ? sanitizePiSubagentsDiagnosticText(event.error)
+                : event.error;
             agent.errorCode = event.errorCode;
             agent.recoverable = event.recoverable;
             agent.tokens = event.tokens;
             if (event.tokenUsage) agent.tokenUsage = event.tokenUsage;
             if (event.model) agent.model = event.model;
-            if (event.diagnostics) agent.diagnostics = event.diagnostics;
+            if (event.diagnostics) agent.diagnostics = sanitizePiSubagentsDiagnostics(event.diagnostics);
             // Real per-agent end time — only terminal agents get one; a still-
             // running agent's entry keeps endedAt undefined.
             const ts = managed.agentTimestamps.get(agent.id);
