@@ -18,6 +18,7 @@ import {
   PI_SUBAGENTS_STARTED_EVENT,
 } from "../src/pi-subagents-backend.js";
 import { registerWorkflowCommands } from "../src/workflow-commands.js";
+import { createWorkflowControlTool } from "../src/workflow-control-tool.js";
 import { WorkflowManager } from "../src/workflow-manager.js";
 import { createWorkflowTool } from "../src/workflow-tool.js";
 import { NavigatorModel, NavigatorState, renderNavigator } from "../src/workflow-ui.js";
@@ -64,6 +65,11 @@ function withTempRuntime(fn: (cwd: string) => Promise<void>) {
 
 function execute(tool: ReturnType<typeof createWorkflowTool>, id: string, args: Record<string, unknown>) {
   return (tool.execute as any)(id, args, undefined, undefined, undefined);
+}
+
+function control(manager: WorkflowManager, args: Record<string, unknown>) {
+  const tool = createWorkflowControlTool({ manager });
+  return (tool.execute as any)("lifecycle-control", args, undefined, undefined, undefined);
 }
 
 async function waitFor(predicate: () => boolean, message: string): Promise<void> {
@@ -220,7 +226,9 @@ test(
     abortManager.on("error", () => {});
     const aborted = abortManager.startInBackground(serialScript);
     await waitFor(() => requestId !== "", "delegated request did not start before abort");
-    assert.equal(abortManager.stop(aborted.runId), true);
+    const stopped = await control(abortManager, { action: "stop", runId: aborted.runId });
+    assert.equal(stopped.details.result, "stopped");
+    assert.equal((stopped.details.run as any).status, "aborted");
     await assert.rejects(aborted.promise, /aborted|cancelled/i);
     assert.equal(cancelled, requestId);
     assert.equal(abortManager.listRuns().find(({ runId }) => runId === aborted.runId)?.status, "aborted");
@@ -261,7 +269,8 @@ test(
 test(
   "pi-subagents lifecycle: compatible extension reload preserves ownership and paused work resumes from its journal",
   withTempRuntime(async (cwd) => {
-    const bus = reviewedBus();
+    const bus = createEventBus();
+    const initialProvider = registerSubagentDelegationProvider(bus, DEFAULT_SUBAGENT_DELEGATION_PROVIDER);
     const pending: any[] = [];
     bus.on(PI_SUBAGENTS_REQUEST_EVENT, (request: any) => {
       pending.push(request);
@@ -279,6 +288,10 @@ test(
     handoffWorkflowRuntime({ cwd, extensionVersion: WORKFLOW_EXTENSION_VERSION, manager, effort: { level: "high" } });
     const claimed = claimWorkflowRuntime(cwd).compatible;
     assert.equal(claimed?.manager, manager, "reload must retain the one manager that owns promises and controls");
+
+    const replacementProvider = registerSubagentDelegationProvider(bus, DEFAULT_SUBAGENT_DELEGATION_PROVIDER);
+    initialProvider.dispose();
+    manager.reconfigureAfterReload({ piSubagentsEvents: bus });
 
     assert.equal(manager.pause(run.runId), true);
     await run.promise.catch(() => {});
@@ -312,6 +325,11 @@ test(
       finalAgents[1]?.delegatedDiagnostics?.providerStatus,
       "completed",
       "resumed live result persists diagnostics",
+    );
+    assert.equal(
+      finalAgents[1]?.delegatedDiagnostics?.providerGeneration,
+      replacementProvider.descriptor.generation,
+      "resumed work renegotiates the replacement provider generation",
     );
   }),
 );
