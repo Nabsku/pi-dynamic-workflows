@@ -263,6 +263,76 @@ test("pi-subagents backend correlates concurrent responses strictly by requestId
   assert.deepEqual(await Promise.all([a, b]), ["A", "B"]);
 });
 
+test("provider-generation router keeps high-fanout dispatch O(1) with bounded progress", async () => {
+  const { bus, count } = listenerCountingBus();
+  const requests: any[] = [];
+  const histories = new Map<string, any[]>();
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw) => requests.push(raw));
+  const backend = new PiSubagentsBackend(bus);
+  const pending = Array.from({ length: 128 }, (_, index) =>
+    backend.run(`task-${index}`, {
+      cwd: "/repo",
+      onHistory: (history) => histories.set(`task-${index}`, history),
+    }),
+  );
+
+  assert.equal(requests.length, 128);
+  assert.equal(count(), 4, "one request listener plus one three-channel generation router");
+  for (const request of requests.toReversed()) {
+    bus.emit(PI_SUBAGENTS_UPDATE_EVENT, { version: 1, requestId: request.requestId, recentOutput: "latest" });
+    bus.emit(PI_SUBAGENTS_STARTED_EVENT, { version: 1, requestId: request.requestId });
+    bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(request.requestId, { output: request.task }));
+    bus.emit(PI_SUBAGENTS_UPDATE_EVENT, { version: 1, requestId: request.requestId, recentOutput: "too late" });
+  }
+
+  assert.deepEqual(
+    await Promise.all(pending),
+    Array.from({ length: 128 }, (_, index) => `task-${index}`),
+  );
+  assert.equal(count(), 1, "the idle router releases every global listener");
+  assert.ok([...histories.values()].every((history) => history.length <= 2));
+  assert.ok([...histories.values()].every((history) => history.every((entry) => entry.text !== "too late")));
+});
+
+test("provider generations route independently across replacement and exact cleanup", async () => {
+  const { bus, count } = listenerCountingBus();
+  const requests: any[] = [];
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw) => requests.push(raw));
+  const oldBackend = new PiSubagentsBackend(bus);
+  const oldPending = oldBackend.run("old", { cwd: "/repo" });
+  registerSubagentDelegationProvider(bus, DEFAULT_SUBAGENT_DELEGATION_PROVIDER);
+  const newPending = new PiSubagentsBackend(bus).run("new", { cwd: "/repo" });
+
+  assert.equal(count(), 7, "one request listener plus two generation-scoped routers");
+  bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(requests[1].requestId, { output: "NEW" }));
+  assert.equal(await newPending, "NEW");
+  assert.equal(count(), 4, "the settled replacement generation is removed without disturbing the old request");
+  bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(requests[0].requestId, { output: "OLD" }));
+  assert.equal(await oldPending, "OLD");
+  assert.equal(count(), 1);
+});
+
+test("cancellation storm emits once per request and releases the shared router", async () => {
+  const { bus, count } = listenerCountingBus();
+  const controllers = Array.from({ length: 128 }, () => new AbortController());
+  const cancelled = new Set<string>();
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, () => {});
+  bus.on(PI_SUBAGENTS_CANCEL_EVENT, (raw: any) => cancelled.add(raw.requestId));
+  const backend = new PiSubagentsBackend(bus);
+  const pending = controllers.map((controller, index) =>
+    backend.run(`cancel-${index}`, { cwd: "/repo", signal: controller.signal }),
+  );
+  assert.equal(count(), 5, "two harness listeners plus one shared three-channel router");
+  for (const controller of controllers) {
+    controller.abort();
+    controller.abort();
+  }
+  const settled = await Promise.allSettled(pending);
+  assert.ok(settled.every(({ status }) => status === "rejected"));
+  assert.equal(cancelled.size, 128);
+  assert.equal(count(), 2);
+});
+
 test("pi-subagents backend abort emits correlated cancel and cleans listeners", async () => {
   const { bus, count } = listenerCountingBus();
   const controller = new AbortController();
@@ -471,7 +541,7 @@ test("pi-subagents retains a bounded coalesced progress tail", async () => {
       bus.emit(PI_SUBAGENTS_UPDATE_EVENT, {
         version: 1,
         requestId: raw.requestId,
-        recentOutputLines: [`line-${i}`, `line-${i}`],
+        recentOutput: `${String(i).padStart(3, "0")}:${"x".repeat(16_000)}`,
       });
     }
     bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(raw.requestId));
@@ -479,7 +549,8 @@ test("pi-subagents retains a bounded coalesced progress tail", async () => {
   await new PiSubagentsBackend(bus).run("task", { cwd: "/repo", onHistory: (value) => histories.push(value) });
   const tail = histories.at(-1) ?? [];
   assert.ok(tail.length <= 33, `expected bounded progress plus final output, got ${tail.length}`);
-  assert.equal(tail.filter((entry) => entry.text === "line-99\nline-99").length, 1);
+  assert.ok(tail.reduce((total, entry) => total + entry.text.length, 0) <= 262_144 + "done".length);
+  assert.match(tail.at(-2)?.text ?? "", /^099:/, "the newest progress survives after older output is coalesced");
 });
 
 test("pi-subagents rejects excessive progress before joining lines", async () => {

@@ -186,6 +186,31 @@ function safelyTargets(raw: unknown, requestId: string): boolean {
   }
 }
 
+function routedRequestId(raw: unknown): string | undefined {
+  try {
+    if (raw === null || typeof raw !== "object") return undefined;
+    const descriptors = Object.getOwnPropertyDescriptors(raw);
+    const version = descriptors.version;
+    const id = descriptors.requestId;
+    if (
+      !version ||
+      !("value" in version) ||
+      version.get ||
+      version.set ||
+      version.value !== PI_SUBAGENTS_PROTOCOL_VERSION ||
+      !id ||
+      !("value" in id) ||
+      id.get ||
+      id.set ||
+      typeof id.value !== "string"
+    )
+      return undefined;
+    return id.value;
+  } catch {
+    return undefined;
+  }
+}
+
 function validOptionalString(value: unknown, max = MAX_PROTOCOL_STRING_CHARS): boolean {
   return value === undefined || (typeof value === "string" && value.length <= max);
 }
@@ -235,6 +260,64 @@ function validKnownJson(value: unknown, depth = 0): boolean {
   }
 }
 
+interface RoutedRequest {
+  started(raw: unknown): void;
+  update(raw: unknown): void;
+  response(raw: unknown): void;
+}
+
+class ProviderGenerationRouter {
+  private readonly requests = new Map<string, RoutedRequest>();
+  private readonly off: Array<() => void>;
+
+  constructor(
+    events: EventBus,
+    private readonly release: () => void,
+  ) {
+    const dispatch = (kind: keyof RoutedRequest) => (raw: unknown) => {
+      const requestId = routedRequestId(raw);
+      if (requestId !== undefined) this.requests.get(requestId)?.[kind](raw);
+    };
+    this.off = [
+      events.on(PI_SUBAGENTS_STARTED_EVENT, dispatch("started")),
+      events.on(PI_SUBAGENTS_UPDATE_EVENT, dispatch("update")),
+      events.on(PI_SUBAGENTS_RESPONSE_EVENT, dispatch("response")),
+    ];
+  }
+
+  register(requestId: string, request: RoutedRequest): () => void {
+    this.requests.set(requestId, request);
+    let registered = true;
+    return () => {
+      if (!registered) return;
+      registered = false;
+      this.requests.delete(requestId);
+      if (this.requests.size === 0) {
+        for (const off of this.off.splice(0)) off();
+        this.release();
+      }
+    };
+  }
+}
+
+const PROVIDER_ROUTERS = new WeakMap<EventBus, Map<number, ProviderGenerationRouter>>();
+
+function providerRouter(events: EventBus, generation: number): ProviderGenerationRouter {
+  let generations = PROVIDER_ROUTERS.get(events);
+  if (!generations) {
+    generations = new Map();
+    PROVIDER_ROUTERS.set(events, generations);
+  }
+  const existing = generations.get(generation);
+  if (existing) return existing;
+  const router = new ProviderGenerationRouter(events, () => {
+    if (generations?.get(generation) === router) generations.delete(generation);
+    if (generations?.size === 0) PROVIDER_ROUTERS.delete(events);
+  });
+  generations.set(generation, router);
+  return router;
+}
+
 /** Narrow optional adapter over pi-subagents' public v1 foreground delegation protocol. */
 export class PiSubagentsBackend {
   private negotiated?: { generation: number; descriptor: SubagentDelegationProviderDescriptor };
@@ -280,8 +363,9 @@ export class PiSubagentsBackend {
         ),
       );
     }
+    let descriptor: SubagentDelegationProviderDescriptor;
     try {
-      this.negotiate(options);
+      descriptor = this.negotiate(options);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -310,10 +394,11 @@ export class PiSubagentsBackend {
       let handshakeTimer: ReturnType<typeof setTimeout> | undefined;
       let cancelEmitted = false;
       let progressChars = 0;
-      const cleanups: Array<() => void> = [];
+      let unregisterRoute: (() => void) | undefined;
       const cleanup = () => {
         if (handshakeTimer) clearTimeout(handshakeTimer);
-        for (const off of cleanups.splice(0)) off();
+        unregisterRoute?.();
+        unregisterRoute = undefined;
         options.signal?.removeEventListener("abort", onAbort);
       };
       const settle = (fn: () => void) => {
@@ -349,9 +434,13 @@ export class PiSubagentsBackend {
       const appendHistory = (text: string, progress = false) => {
         if (!text.trim() || history.at(-1)?.text === text) return;
         if (progress) {
-          if (progressChars + text.length > MAX_PROGRESS_CHARS) return;
+          while (
+            history.length > 0 &&
+            (history.length >= MAX_PROGRESS_HISTORY || progressChars + text.length > MAX_PROGRESS_CHARS)
+          ) {
+            progressChars -= history.shift()?.text.length ?? 0;
+          }
           progressChars += text.length;
-          while (history.length >= MAX_PROGRESS_HISTORY) history.shift();
         }
         history.push({ role: "assistant", kind: "text", text });
         options.onHistory?.([...history]);
@@ -359,8 +448,8 @@ export class PiSubagentsBackend {
       const malformed = (kind: string) =>
         fail(`pi-subagents returned malformed protocol ${kind}`, WorkflowErrorCode.AGENT_EXECUTION_ERROR, false);
 
-      cleanups.push(
-        events.on(PI_SUBAGENTS_STARTED_EVENT, (raw) => {
+      unregisterRoute = providerRouter(events, descriptor.generation).register(requestId, {
+        started: (raw) => {
           const started = ownDataRecord(raw, STARTED_FIELDS);
           if (!started) {
             if (safelyTargets(raw, requestId)) malformed("started event");
@@ -368,8 +457,8 @@ export class PiSubagentsBackend {
           }
           if (!validBase(started, requestId)) return;
           acknowledgeBridge();
-        }),
-        events.on(PI_SUBAGENTS_UPDATE_EVENT, (raw) => {
+        },
+        update: (raw) => {
           const update = ownDataRecord(raw, UPDATE_FIELDS);
           if (!update) {
             if (safelyTargets(raw, requestId)) malformed("update");
@@ -404,8 +493,8 @@ export class PiSubagentsBackend {
                   ? `Running ${update.currentTool}`
                   : "";
           appendHistory(text, true);
-        }),
-        events.on(PI_SUBAGENTS_RESPONSE_EVENT, (raw) => {
+        },
+        response: (raw) => {
           const terminal = ownDataRecord(raw, RESPONSE_FIELDS);
           if (!terminal) {
             if (safelyTargets(raw, requestId)) malformed("response");
@@ -516,8 +605,8 @@ export class PiSubagentsBackend {
           else if (status === "unavailable_context" || status === "acceptance_failed")
             fail(message, WorkflowErrorCode.AGENT_EXECUTION_ERROR, false, details);
           else fail(message, WorkflowErrorCode.AGENT_EXECUTION_ERROR, true, details);
-        }),
-      );
+        },
+      });
 
       if (options.signal?.aborted) {
         onAbort();
