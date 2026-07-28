@@ -645,6 +645,40 @@ return { native, delegated }`,
   assert.equal(result.agentCount, 2);
 });
 
+test("runWorkflow keeps delegated execution isolated from native setup failures", async () => {
+  const bus = reviewedBus();
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
+    bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(raw.requestId, { output: "delegated-ok" }));
+  });
+  const options: any = { cwd: "/repo", piSubagentsEvents: bus, persistLogs: false };
+  Object.defineProperty(options, "agentRegistry", {
+    get() {
+      throw new Error("native agent registry setup failed");
+    },
+  });
+  Object.defineProperty(options, "session", {
+    get() {
+      throw new Error("native session setup failed");
+    },
+  });
+
+  const delegated = await runWorkflow(
+    `export const meta = { name: 'delegated_isolation', description: 'delegated isolation' }
+return await agent('inspect', { backend: 'pi-subagents', agentType: 'reviewer' })`,
+    options,
+  );
+  assert.equal(delegated.result, "delegated-ok");
+
+  await assert.rejects(
+    runWorkflow(
+      `export const meta = { name: 'native_failure', description: 'native failure' }
+return await agent('inspect')`,
+      options,
+    ),
+    /native agent registry setup failed/,
+  );
+});
+
 test("pi-subagents preserves bounded canonical terminal metadata and sanitizes persisted copy", async () => {
   const bus = reviewedBus();
   let diagnostics: any;

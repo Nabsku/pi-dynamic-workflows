@@ -6,6 +6,7 @@ import { parse } from "acorn";
 import type { TSchema } from "typebox";
 import type { AgentUsage } from "./agent.js";
 import { type AgentRunOptions, WorkflowAgent, type WorkflowAgentOptions } from "./agent.js";
+import { type AgentExecutionBackend, PiSubagentsExecutionBackend } from "./agent-execution-backend.js";
 import type { AgentHistoryEntry } from "./agent-history.js";
 import {
   type AgentDefinition,
@@ -400,9 +401,14 @@ export async function runWorkflow<T = unknown>(
   const agentTimeoutMs = options.agentTimeoutMs !== undefined ? options.agentTimeoutMs : DEFAULT_AGENT_TIMEOUT_MS;
   const runId = options.runId ?? `run-${started.toString(36)}`;
   const baseCwd = options.cwd ?? process.cwd();
-  // Snapshot the agentType registry ONCE per run so two agent() calls can't
-  // observe a mid-run edit (determinism); a later resume re-reads it.
-  const agentRegistry = options.agentRegistry ?? loadAgentRegistry(baseCwd);
+  // Native-only resources are initialized lazily. A delegated-only run must not
+  // construct coding tools, scan native agent definitions, or inherit failures
+  // from native session setup it never uses.
+  let agentRegistry: AgentRegistry | undefined;
+  const getAgentRegistry = () => {
+    agentRegistry ??= options.agentRegistry ?? loadAgentRegistry(baseCwd);
+    return agentRegistry;
+  };
 
   // Initialize logger
   const logger = createWorkflowLogger({
@@ -425,7 +431,22 @@ export async function runWorkflow<T = unknown>(
     firstMiss: Number.POSITIVE_INFINITY,
   };
 
-  const agentRunner = options.agent ?? new WorkflowAgent(options);
+  let nativeBackend: AgentExecutionBackend | undefined = options.agent;
+  let delegatedBackend: AgentExecutionBackend | undefined = options.agent;
+  const executionBackend = (backend: AgentOptions["backend"]): AgentExecutionBackend => {
+    if (backend === "pi-subagents") {
+      delegatedBackend ??= new PiSubagentsExecutionBackend({
+        cwd: options.cwd,
+        instructions: options.instructions,
+        mainModel: options.mainModel,
+        piSubagentsEvents: options.piSubagentsEvents,
+        tools: options.tools,
+      });
+      return delegatedBackend;
+    }
+    nativeBackend ??= new WorkflowAgent(options);
+    return nativeBackend;
+  };
   const concurrency = normalizeConcurrency(
     options.concurrency ?? Math.max(1, (globalThis.navigator?.hardwareConcurrency ?? 8) - 2),
   );
@@ -599,7 +620,9 @@ export async function runWorkflow<T = unknown>(
     // pi-subagents owns its own role registry. Do not also resolve that role
     // through this extension's .pi/agents registry or merge two authorities.
     const agentDef =
-      agentOptions.backend === "pi-subagents" ? undefined : resolveAgentType(agentOptions.agentType, agentRegistry);
+      agentOptions.backend === "pi-subagents"
+        ? undefined
+        : resolveAgentType(agentOptions.agentType, getAgentRegistry());
     if (agentOptions.backend !== "pi-subagents" && agentOptions.agentType && !agentDef) {
       log(`unknown agentType "${agentOptions.agentType}"; using default tools/model`);
     }
@@ -627,7 +650,8 @@ export async function runWorkflow<T = unknown>(
 
     // Fail unavailable or drifted delegated providers before reserving capacity.
     // This synchronous discovery is not request acknowledgement.
-    const preflightIdentity = agentRunner.preflight?.({
+    const backend = executionBackend(agentOptions.backend);
+    const preflightIdentity = backend.preflight?.({
       schema: agentOptions.schema,
       model: modelSpec,
       tier: agentOptions.tier,
@@ -791,7 +815,7 @@ export async function runWorkflow<T = unknown>(
               onRunFatal = () => agentController.abort();
               shared.runFatalController.signal.addEventListener("abort", onRunFatal, { once: true });
             }
-            const runPromise = agentRunner.run(prompt, {
+            const runPromise = backend.run(prompt, {
               label,
               // Identifiable name for persisted sessions (persistAgentSessions).
               sessionName: `workflow:${runId} ${label}`,
