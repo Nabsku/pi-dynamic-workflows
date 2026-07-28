@@ -594,3 +594,43 @@ test("WorkflowAgent delegates an explicit role without overriding its configured
   assert.match(request.task, /Task label: review gate/);
   assert.match(request.task, /inspect this/);
 });
+
+test("workflow forwards phase and metadata model routes to delegated calls", async () => {
+  const bus = reviewedBus();
+  const requests: any[] = [];
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
+    requests.push(raw);
+    bus.emit(PI_SUBAGENTS_STARTED_EVENT, { version: 1, requestId: raw.requestId });
+    bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(raw.requestId));
+  });
+  const models = [
+    { provider: "route", id: "phase" },
+    { provider: "route", id: "metadata" },
+  ] as any[];
+  const modelRegistry = {
+    find: (provider: string, id: string) => models.find((model) => model.provider === provider && model.id === id),
+    getAvailable: () => models,
+    getAll: () => models,
+  } as any;
+
+  await runWorkflow(
+    `export const meta = {
+  name: 'delegated_routes', description: 'delegated phase and metadata routing', model: 'route/metadata',
+  phases: [{ title: 'Phase route', model: 'route/phase' }, { title: 'Metadata route' }]
+}
+phase('Phase route')
+await agent('phase task', { backend: 'pi-subagents', agentType: 'reviewer' })
+phase('Metadata route')
+await agent('metadata task', { backend: 'pi-subagents', agentType: 'reviewer' })
+return {}`,
+    { cwd: "/repo", modelRegistry, piSubagentsEvents: bus, persistLogs: false },
+  );
+
+  assert.deepEqual(
+    requests.map(({ agent, model }) => ({ agent, model })),
+    [
+      { agent: "reviewer", model: "route/phase" },
+      { agent: "reviewer", model: "route/metadata" },
+    ],
+  );
+});

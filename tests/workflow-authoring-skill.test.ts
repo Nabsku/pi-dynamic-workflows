@@ -133,6 +133,12 @@ test("backend onboarding documents the fail-closed operator and trust contract",
   assert.match(operatorGuide, /no bus secret/i);
   assert.match(combined, /no automatic (selection or )?fallback/i);
   assert.match(authoringGuide, /native execution is the default/i);
+  for (const guide of [operatorGuide, authoringGuide]) {
+    assert.match(
+      guide,
+      /explicit `model` > resolved `tier` > phase model > metadata model > pi-subagents role\/default model/,
+    );
+  }
 });
 
 test("one generated supported-capability table is fresh across skill, README, and website docs", () => {

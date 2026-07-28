@@ -68,7 +68,7 @@ Observe the workflow through `/workflows`, `workflow_control status`, or the nor
 
 - Native calls use pi-dynamic-workflows' normal priority: explicit `model` > local `agentType` model > `tier` > phase model > metadata model > implicit `medium` > session default.
 - Delegated calls pass `agentType` unchanged as the pi-subagents role. pi-dynamic-workflows does not also resolve its local agent registry for that role.
-- On a delegated call, an explicit `model` or resolved `tier` is forwarded and overrides the delegated role's configured model. With neither, no model is forwarded, so pi-subagents keeps its role/default model.
+- Delegated model precedence is explicit `model` > resolved `tier` > phase model > metadata model > pi-subagents role/default model. Any resolved workflow route is forwarded and overrides the delegated role's configured model. Only a call with none of those workflow routes leaves the model unset for pi-subagents to choose.
 - An unsupported requested model field is rejected during provider negotiation. It does not silently use another selector or backend.
 
 ## Supported and unsupported behavior
@@ -84,7 +84,7 @@ Unsupported: JSON Schema results; workflow shared-store child tools; workflow cu
 | `provider discovery is unavailable` | Wrong/stock pi-subagents, one extension is not active, or the extensions are not in the same Pi process | Check `pi list`, reinstall the exact pinned source, then `/reload` |
 | Provider identity/package/version/protocol drift | The active bridge is not the reviewed contract | Restore the pinned commit; do not bypass the check |
 | `did not acknowledge` | Discovery passed, but no bridge accepted the correlated request in time | Check extension load errors and reload once; retry only after the bridge is healthy |
-| Requested model routing is unsupported | The provider descriptor cannot carry the selected `model`/`tier` | Remove the selector to use the delegated role model, or restore the reviewed provider |
+| Requested model routing is unsupported | The provider descriptor cannot carry the selected explicit, tier, phase, or metadata model | Remove every applicable workflow model route to use the delegated role model, or restore the reviewed provider |
 | `invalid_request`, unknown status, malformed/oversized output | Contract drift or invalid bridge data | Preserve the error, stop delegated use, and restore/review the provider pair |
 | `timed_out`, `cancelled`, `interrupted`, budget/acceptance failure | The delegated lifecycle ended without a completed result | Fix the named limit or task, then rerun; the runtime does not switch to native automatically |
 
