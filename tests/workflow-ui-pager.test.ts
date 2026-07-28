@@ -151,7 +151,7 @@ test("delegated agent detail shows backend role model provenance and recovery", 
       protocol: 1,
       role: "reviewer",
       roleSemantics: "pi-subagents-provider-role",
-      effectiveModel: "vendor/model",
+      requestedModel: "vendor/requested",
       modelPrecedence: "tier",
       recoveryHint: "Increase timeoutMs or reduce the delegated task scope, then retry.",
     },
@@ -163,7 +163,8 @@ test("delegated agent detail shows backend role model provenance and recovery", 
   assert.match(summary, /Recovery: Increase timeoutMs/);
   state.togglePager();
   const pager = renderNavigator(state, model, 100, undefined, 30).join("\n");
-  assert.match(pager, /Effective model: vendor\/model \(tier precedence\)/);
+  assert.doesNotMatch(pager, /Effective model:/);
+  assert.doesNotMatch(pager, /vendor\/requested/);
 });
 
 test("tail mode follows appended history and scrolling up disables follow", () => {

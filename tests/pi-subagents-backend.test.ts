@@ -125,6 +125,25 @@ test("pi-subagents backend deduplicates repeated progress and terminal output", 
   );
 });
 
+test("pi-subagents backend does not report a requested model as effective without bridge evidence", async () => {
+  const bus = reviewedBus();
+  let diagnostics: any;
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
+    assert.equal(raw.model, "vendor/requested");
+    bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(raw.requestId));
+  });
+
+  await new PiSubagentsBackend(bus).run("task", {
+    cwd: "/repo",
+    model: "vendor/requested",
+    onDiagnostics: (value) => (diagnostics = value),
+  });
+
+  assert.equal(diagnostics.requestedModel, "vendor/requested");
+  assert.equal(diagnostics.effectiveModel, undefined);
+  assert.equal(Object.hasOwn(diagnostics, "effectiveModel"), false);
+});
+
 test("pi-subagents backend uses the exact agentType as role", async () => {
   const bus = reviewedBus();
   let role = "";
@@ -663,12 +682,14 @@ test("pi-subagents diagnostics survive journal replay without a second provider 
   });
   const script = `export const meta = { name: 'diagnostics_replay', description: 'diagnostics replay' }
 return await agent('task', { backend: 'pi-subagents', agentType: 'reviewer' })`;
+  let canonical: any;
   await runWorkflow(script, {
     cwd: "/repo",
     piSubagentsEvents: bus,
     persistLogs: false,
     runId: "diag-run",
     onAgentJournal: (entry) => journal.push(entry),
+    onAgentEnd: (event) => (canonical = event.delegatedDiagnostics),
   });
   let replayed: any;
   await runWorkflow(script, {
@@ -680,7 +701,11 @@ return await agent('task', { backend: 'pi-subagents', agentType: 'reviewer' })`;
     onAgentEnd: (event) => (replayed = event.delegatedDiagnostics),
   });
   assert.equal(requests, 1);
+  assert.equal(canonical.effectiveModel, undefined);
+  assert.equal(Object.hasOwn(canonical, "effectiveModel"), false);
   assert.equal(replayed.runId, "child-1");
   assert.equal(replayed.providerStatus, "completed");
   assert.equal(replayed.role, "reviewer");
+  assert.equal(replayed.effectiveModel, undefined);
+  assert.equal(Object.hasOwn(replayed, "effectiveModel"), false);
 });

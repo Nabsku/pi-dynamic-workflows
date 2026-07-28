@@ -513,7 +513,7 @@ export class PiSubagentsBackend {
           acknowledgeBridge();
           const status = terminal.status;
           const wireError = typeof terminal.error === "string" ? sanitizeDiagnosticText(terminal.error) : undefined;
-          const effectiveModel = typeof terminal.model === "string" ? terminal.model : options.model;
+          const effectiveModel = typeof terminal.model === "string" ? terminal.model : undefined;
           const usage =
             typeof terminal.tokens === "number"
               ? { total: terminal.tokens, provenance: "pi-subagents-v1" as const }

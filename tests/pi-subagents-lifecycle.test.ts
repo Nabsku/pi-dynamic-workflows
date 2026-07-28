@@ -103,7 +103,6 @@ test(
       bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, {
         ...response(request.requestId, request.agent),
         runId: `child-${request.agent}`,
-        model: "vendor/effective",
         turns: 2,
         toolCount: 1,
         durationMs: 25,
@@ -122,19 +121,22 @@ test(
         role: agent.delegatedDiagnostics?.role,
         status: agent.delegatedDiagnostics?.providerStatus,
         model: agent.delegatedDiagnostics?.effectiveModel,
+        hasEffectiveModel: Object.hasOwn(agent.delegatedDiagnostics ?? {}, "effectiveModel"),
         usage: agent.delegatedDiagnostics?.usage,
       })),
       [
         {
           role: "worker",
           status: "completed",
-          model: "vendor/effective",
+          model: undefined,
+          hasEffectiveModel: false,
           usage: { total: 7, provenance: "pi-subagents-v1" },
         },
         {
           role: "reviewer",
           status: "completed",
-          model: "vendor/effective",
+          model: undefined,
+          hasEffectiveModel: false,
           usage: { total: 7, provenance: "pi-subagents-v1" },
         },
       ],
