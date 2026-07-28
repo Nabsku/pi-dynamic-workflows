@@ -174,7 +174,7 @@ test("runWorkflow normalizes a fractional run-level timeout before bridge emissi
   });
   await runWorkflow(
     `export const meta = { name: 'timeout_bridge', description: 'timeout bridge' }
-return await agent('task', { backend: 'pi-subagents' })`,
+return await agent('task', { backend: 'pi-subagents', agentType: 'reviewer' })`,
     { cwd: "/repo", agentTimeoutMs: 1_000.5, piSubagentsEvents: bus, persistLogs: false },
   );
   assert.equal(timeoutMs, 1_001);
@@ -535,13 +535,27 @@ test("workflow negotiates delegated providers before starting or running an agen
   await assert.rejects(
     runWorkflow(
       `export const meta = { name: 'provider_preflight', description: 'provider preflight' }
-return await agent('task', { backend: 'pi-subagents' })`,
+return await agent('task', { backend: 'pi-subagents', agentType: 'reviewer' })`,
       { cwd: "/repo", agent, persistLogs: false, onAgentStart: () => starts++ },
     ),
     /provider discovery rejected/i,
   );
   assert.equal(starts, 0);
   assert.equal(runs, 0);
+});
+
+test("WorkflowAgent fails closed for mutating or undeclared delegated roles before provider reservation", () => {
+  const bus = reviewedBus();
+  const agent = new WorkflowAgent({ cwd: process.cwd(), piSubagentsEvents: bus });
+
+  for (const options of [
+    { backend: "pi-subagents" as const },
+    { backend: "pi-subagents" as const, agentType: "worker" },
+    { backend: "pi-subagents" as const, agentType: "reviewer", isolation: "worktree" as const },
+  ]) {
+    assert.throws(() => agent.preflight(options), /analysis\/research\/review\/report|worktree isolation/i);
+  }
+  assert.doesNotThrow(() => agent.preflight({ backend: "pi-subagents", agentType: "reviewer" }));
 });
 
 test("workflow negotiates a tier-routed delegated model before reserving or starting an agent", async () => {
@@ -559,7 +573,7 @@ test("workflow negotiates a tier-routed delegated model before reserving or star
   await assert.rejects(
     runWorkflow(
       `export const meta = { name: 'tier_preflight', description: 'tier preflight' }
-return await agent('task', { backend: 'pi-subagents', tier: 'medium' })`,
+return await agent('task', { backend: 'pi-subagents', agentType: 'reviewer', tier: 'medium' })`,
       {
         cwd: "/repo",
         mainModel: "vendor/default",

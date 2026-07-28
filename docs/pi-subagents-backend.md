@@ -75,9 +75,13 @@ Observe the workflow through `/workflows`, `workflow_control status`, or the nor
 
 ## Supported and unsupported behavior
 
-Supported: foreground v1 delegation within either a foreground or background workflow run; exact request correlation; concurrent requests; cancellation and timeout propagation; extension reload while the same-process runtime is handed off; journaled workflow resume; bounded progress/history; aggregate token totals when reported; role forwarding; explicit model routing; terminal diagnostics.
+Supported: foreground v1 delegation within either a foreground or background workflow run; analysis/research/review/report roles (`analyst`, `researcher`, `reviewer`, `reporter`); exact request correlation; concurrent requests; cancellation and timeout propagation; extension reload while the same-process runtime is handed off; workflow resume with delegated calls rerun live; bounded progress/history; aggregate token totals when reported; role forwarding; explicit model routing; terminal diagnostics.
 
-Unsupported: JSON Schema results; workflow shared-store child tools; workflow custom toolsets; delegated worktree isolation; automatic backend selection; backend fallback; a public released provider compatibility range; a second provider registry or EventBus discovery protocol; delegated token split/cost accounting when the provider does not report it; a second lifecycle authority.
+Unsupported: mutation/implementation roles; JSON Schema results; workflow shared-store child tools; workflow custom toolsets; delegated worktree isolation; automatic backend selection; backend fallback; a public released provider compatibility range; a second provider registry or EventBus discovery protocol; delegated token split/cost accounting when the provider does not report it; a second lifecycle authority.
+
+The public provider descriptor does not expose a tool allowlist, a read-only guarantee, a durable effect identity, or worktree ownership. The role allowlist therefore limits the advertised use but is not a security boundary: configure those provider roles without mutation tools. Any call without an allowed role, any writer-style role, and every `backend: "pi-subagents"` + `isolation: "worktree"` combination fails before an agent slot or worktree is reserved. Native pi-dynamic-workflows is the sole worktree owner.
+
+Resume hashes bind native execution policy and, for delegated calls, the reviewed `v1@b77781ea926203b32af8fad439432e5cef2aae5f` protocol contract. Because the provider's effective role/tool contract and filesystem effects are not available to bind, delegated calls always rerun live on workflow resume. Worktree-isolated native calls also rerun live: cached assistant text is never replayed as proof that a removed worktree's filesystem effects still exist.
 
 ## Expected failures and recovery
 
@@ -100,7 +104,7 @@ Run the committed same-process bridge harness; it does not contact a model provi
 node --import tsx --test tests/pi-subagents-lifecycle.test.ts
 ```
 
-The harness exercises inline foreground settlement, default background ownership with immediate parent continuation, parallel delegated nodes, workflow-control abort propagation, timeout, provider failure without fallback, extension reload, and journaled resume. It uses the exact pinned fork's real provider registration/parser with deterministic local executors. A passing harness proves adapter and workflow lifecycle semantics only; it is not evidence that a live model, credentials, or external side effect works.
+The harness exercises inline foreground settlement, default background ownership with immediate parent continuation, parallel delegated nodes, workflow-control abort propagation, timeout, provider failure without fallback, extension reload, and resume that reruns delegated calls live. It uses the exact pinned fork's real provider registration/parser with deterministic local executors. A passing harness proves adapter and workflow lifecycle semantics only; it is not evidence that a live model, credentials, or external side effect works.
 
 ## Architecture ownership and trust
 

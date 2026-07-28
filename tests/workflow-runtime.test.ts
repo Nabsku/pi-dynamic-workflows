@@ -411,6 +411,76 @@ test("resume replays cached results without re-running agents", async () => {
   assert.equal(JSON.stringify(r2.result), JSON.stringify(r1.result));
 });
 
+test("resume never replays delegated text because its role/tool contract and effects are not durable", async () => {
+  const script = `export const meta = { name: 'delegated_resume', description: 'delegated resume safety' }
+return await agent('review', { backend: 'pi-subagents', agentType: 'reviewer' })`;
+  const first = countingAgent();
+  const journal: JournalEntry[] = [];
+  await runWorkflow(script, {
+    agent: first.runner,
+    persistLogs: false,
+    runId: "delegated-resume-run",
+    onAgentJournal: (entry) => journal.push(entry),
+  });
+  assert.equal(first.state.calls, 1);
+
+  const resumed = countingAgent();
+  await runWorkflow(script, {
+    agent: resumed.runner,
+    persistLogs: false,
+    runId: "delegated-resume-run",
+    resumeJournal: new Map(journal.map((entry) => [`${entry.runId}:${entry.index}`, entry])),
+  });
+  assert.equal(resumed.state.calls, 1, "delegated calls must execute live after interruption/resume");
+});
+
+test("resume reruns worktree-isolated calls instead of treating cached text as effect presence", async () => {
+  const script = `export const meta = { name: 'worktree_resume', description: 'worktree resume safety' }
+return await agent('edit', { isolation: 'worktree', label: 'isolated edit' })`;
+  const first = countingAgent();
+  const journal: JournalEntry[] = [];
+  await runWorkflow(script, {
+    agent: first.runner,
+    persistLogs: false,
+    runId: "worktree-resume-run",
+    onAgentJournal: (entry) => journal.push(entry),
+  });
+
+  const resumed = countingAgent();
+  await runWorkflow(script, {
+    agent: resumed.runner,
+    persistLogs: false,
+    runId: "worktree-resume-run",
+    resumeJournal: new Map(journal.map((entry) => [`${entry.runId}:${entry.index}`, entry])),
+  });
+  assert.equal(resumed.state.calls, 1, "a removed worktree's cached text cannot prove its effects exist");
+});
+
+test("resume identity includes effective timeout and retry policy", async () => {
+  const journal: JournalEntry[] = [];
+  const first = countingAgent();
+  const script = (
+    timeoutMs: number,
+    retries: number,
+  ) => `export const meta = { name: 'contract_identity', description: 'contract identity' }
+return await agent('inspect', { label: 'inspect', timeoutMs: ${timeoutMs}, retries: ${retries} })`;
+  await runWorkflow(script(10, 0), {
+    agent: first.runner,
+    persistLogs: false,
+    runId: "contract-identity-run",
+    onAgentJournal: (entry) => journal.push(entry),
+  });
+
+  const changed = countingAgent();
+  await runWorkflow(script(20, 1), {
+    agent: changed.runner,
+    persistLogs: false,
+    runId: "contract-identity-run",
+    resumeJournal: new Map(journal.map((entry) => [`${entry.runId}:${entry.index}`, entry])),
+  });
+  assert.equal(changed.state.calls, 1, "changed execution policy must invalidate cached output");
+});
+
 test("resume re-runs only the changed call (hash mismatch)", async () => {
   const first = countingAgent();
   const journal: JournalEntry[] = [];

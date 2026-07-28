@@ -20,13 +20,14 @@ Every exact fact below is projected from the installed extension's capability co
 - `tier`: string (optional; configured route name; dynamic reference: model-routes)
 - `isolation`: "worktree" (optional)
 - `agentType`: string (optional; must come from provided context; dynamic reference: agent-types)
-- `backend`: "native" | "pi-subagents" (optional; default: "native"; pi-subagents is opt-in and requires its public v1 bridge in the same Pi process; the delegated child bridge is foreground-only, but its owning workflow supports foreground and background invocation; pi-subagents does not support schema, workflow shared-store child tools, or workflow custom toolsets)
+- `backend`: "native" | "pi-subagents" (optional; default: "native"; pi-subagents is opt-in and requires its public v1 bridge in the same Pi process; the delegated child bridge is foreground-only, but its owning workflow supports foreground and background invocation; pi-subagents is limited to analyst, researcher, reviewer, and reporter roles; mutation and worktree isolation fail closed; pi-subagents does not support schema, workflow shared-store child tools, or workflow custom toolsets)
 - `timeoutMs`: number | null (optional; default: run timeout; null disables)
 - `retries`: number (optional; default: run retry count; finite values are floored and clamped to 0..3)
 - Constraint: recoverable failures return null after retries; nonrecoverable failures throw
 - Constraint: schema noncompliance after bounded structured-output repair is nonrecoverable and bypasses agent retries
 - Constraint: per-agent retries override invocation retries; retries are floored and clamped to 0..3
 - Constraint: resume replays only the longest unchanged prefix; the first miss and every later call execute live
+- Constraint: delegated and worktree-isolated calls always execute live on resume because cached text is not durable effect evidence
 - Constraint: selector priority is explicit model > agentType model > tier > phase model > metadata model > implicit medium > session default
 - Constraint: if the selected model or route is unavailable, execution falls directly to the session default rather than trying lower-priority selectors
 - Constraint: worktree isolation is best-effort; failure logs that isolation was ignored and continues without an isolated working directory

@@ -18,6 +18,7 @@ import { DEFAULT_AGENT_TIMEOUT_MS, MAX_AGENT_RETRIES, MAX_AGENTS_PER_RUN, MAX_CO
 import { WorkflowError, WorkflowErrorCode, wrapError } from "./errors.js";
 import { createWorkflowLogger } from "./logger.js";
 import { parseModelRoutingFromMeta, resolveModelForPhase } from "./model-routing.js";
+import { PI_SUBAGENTS_PROTOCOL_VERSION, PI_SUBAGENTS_REVIEWED_COMMIT } from "./pi-subagents-backend.js";
 import { createAgentStoreTools, SharedStore } from "./shared-store.js";
 import { WORKFLOW_CAPABILITY_CONTRACT, type WorkflowRuntimeImplementations } from "./workflow-capability-contract.js";
 import { createWorktree, removeWorktree, type Worktree } from "./worktree.js";
@@ -598,6 +599,9 @@ export async function runWorkflow<T = unknown>(
     if (agentOptions.backend !== "pi-subagents" && agentOptions.agentType && !agentDef) {
       log(`unknown agentType "${agentOptions.agentType}"; using default tools/model`);
     }
+    // Resolve once so preflight, resume identity/replay policy, instructions,
+    // and the worktree owner all observe the same effective isolation contract.
+    const resolvedIsolation = agentOptions.isolation ?? agentDef?.isolation;
 
     // Model precedence: explicit agentOptions.model > agentType.model > tier > phase model.
     // The "explicit-level" model is opts.model, else the definition's model — either
@@ -619,13 +623,21 @@ export async function runWorkflow<T = unknown>(
       tier: agentOptions.tier,
       backend: agentOptions.backend,
       agentType: agentOptions.agentType,
+      isolation: resolvedIsolation,
       timeoutMs: agentOptions.timeoutMs !== undefined ? agentOptions.timeoutMs : agentTimeoutMs,
     });
 
     // Deterministic resume key: assigned at lexical call time, before the limiter,
     // so parallel()/pipeline() fan-out is reproducible for a fixed script.
     const callIndex = state.callSeq++;
-    const callHash = hashAgentCall(prompt, modelSpec, assignedPhase, agentOptions, agentDefinitionKey(agentDef));
+    const callHash = hashAgentCall(
+      prompt,
+      modelSpec,
+      assignedPhase,
+      agentOptions,
+      agentDefinitionKey(agentDef),
+      resolvedIsolation,
+    );
     // Store delta key: callIndex alone is NOT run-unique. A nested workflow()
     // call (see workflowFn below) shares this run's SharedStore instance but
     // restarts its own callSeq at 0, so a parent agent and a concurrently
@@ -660,7 +672,12 @@ export async function runWorkflow<T = unknown>(
     const cached = options.resumeJournal?.get(deltaKey);
     const hashMatches = cached != null && cached.hash === callHash;
     const cachedEmptyOutput = hashMatches && isEmptyTextAgentResult(cached.result, agentOptions.schema);
-    if (hashMatches && !cachedEmptyOutput && callIndex < state.firstMiss) {
+    // Cached text is not durable-effect evidence. A worktree is removed after
+    // its live call, and the delegated public contract exposes neither a
+    // read-only tool guarantee nor resumable effect identity. Re-run both kinds
+    // of call on resume; only native, non-isolated calls are replayable.
+    const replaySafe = agentOptions.backend !== "pi-subagents" && resolvedIsolation !== "worktree";
+    if (replaySafe && hashMatches && !cachedEmptyOutput && callIndex < state.firstMiss) {
       options.onAgentStart?.({ id: deltaKey, label, phase: assignedPhase, prompt, model: displayModel });
       options.onAgentEnd?.({
         id: deltaKey,
@@ -678,7 +695,7 @@ export async function runWorkflow<T = unknown>(
     }
     // A genuine miss (no journal entry, or the hash changed) marks where the
     // unchanged prefix ends; this call and every later one then run live.
-    if (!hashMatches || cachedEmptyOutput) state.firstMiss = Math.min(state.firstMiss, callIndex);
+    if (!replaySafe || !hashMatches || cachedEmptyOutput) state.firstMiss = Math.min(state.firstMiss, callIndex);
 
     return limiter(async () => {
       const timeout = agentOptions.timeoutMs !== undefined ? agentOptions.timeoutMs : agentTimeoutMs;
@@ -693,7 +710,6 @@ export async function runWorkflow<T = unknown>(
       // is no sentinel to suppress a def's isolation at the call site. Remove the agentType
       // or override with a def that has no isolation field if opt-out is needed.
       let worktree: Worktree | undefined;
-      const resolvedIsolation = agentOptions.isolation ?? agentDef?.isolation;
       if (resolvedIsolation === "worktree") {
         worktree = await createWorktree(baseCwd, `${runId}-${callIndex}-${label}`);
         if (!worktree.isolated) log(`isolation ignored for "${label}" (${worktree.reason})`);
@@ -783,6 +799,7 @@ export async function runWorkflow<T = unknown>(
               // Protocol v1 cannot carry workflow-owned shared-store tools.
               systemTools: agentOptions.backend === "pi-subagents" ? undefined : createAgentStoreTools(store, deltaKey),
               cwd: runCwd,
+              isolation: resolvedIsolation,
               backend: agentOptions.backend,
               agentType: agentOptions.agentType,
               timeoutMs: timeout,
@@ -1542,6 +1559,7 @@ function hashAgentCall(
   phase: string | undefined,
   options: AgentOptions,
   agentDefKey: string | null,
+  resolvedIsolation: "worktree" | undefined,
 ): string {
   const identity = JSON.stringify({
     prompt,
@@ -1550,6 +1568,11 @@ function hashAgentCall(
     phase: phase ?? null,
     agentType: options.agentType ?? null,
     backend: options.backend ?? "native",
+    backendProtocol:
+      options.backend === "pi-subagents" ? `v${PI_SUBAGENTS_PROTOCOL_VERSION}@${PI_SUBAGENTS_REVIEWED_COMMIT}` : null,
+    isolation: resolvedIsolation ?? null,
+    timeoutMs: options.timeoutMs ?? null,
+    retries: options.retries ?? null,
     // Resolved definition (tools/model/prompt) so editing an agent .md invalidates
     // this call's cached result on a later resume.
     agentDef: agentDefKey,

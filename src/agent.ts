@@ -448,6 +448,8 @@ export interface AgentRunOptions<TSchemaDef extends TSchema | undefined = undefi
   onHistory?: (history: AgentHistoryEntry[]) => void;
   /** Run this agent in a different working directory (e.g. an isolated worktree). */
   cwd?: string;
+  /** Workflow-owned isolation intent, used for backend compatibility preflight. */
+  isolation?: "worktree";
   /**
    * Restrict the subagent's coding tools to these names (an agentType
    * definition's `tools` allowlist). Undefined = all coding tools. The
@@ -503,6 +505,8 @@ export type AgentRunResult<TSchemaDef extends TSchema | undefined> = TSchemaDef 
  */
 export const DEFAULT_EXCLUDED_SUBAGENT_TOOLS = ["workflow", "workflow_control"];
 
+const DELEGATED_READ_ONLY_ROLES = new Set(["analyst", "researcher", "reviewer", "reporter"]);
+
 /**
  * The full subagent tool denylist: the always-on defaults plus any names the
  * caller added (via WorkflowAgentOptions.excludeTools) or set on the injected
@@ -556,8 +560,23 @@ export class WorkflowAgent {
     this.hasCustomToolset = options.tools !== undefined;
   }
 
-  preflight(options: AgentRunOptions<TSchema>): void {
+  preflight(options: AgentRunOptions<TSchema | undefined>): void {
     if (options.backend !== "pi-subagents") return;
+    if (options.isolation === "worktree") {
+      throw new WorkflowError(
+        'backend "pi-subagents" cannot be combined with workflow-owned worktree isolation; select backend "native" for isolated mutation',
+        WorkflowErrorCode.SCRIPT_VALIDATION_ERROR,
+        { recoverable: false },
+      );
+    }
+    const delegatedRole = options.agentType?.trim().toLowerCase();
+    if (!delegatedRole || !DELEGATED_READ_ONLY_ROLES.has(delegatedRole)) {
+      throw new WorkflowError(
+        'backend "pi-subagents" is limited to analysis/research/review/report roles because its public provider contract cannot enforce durable filesystem effects; use agentType "analyst", "researcher", "reviewer", or "reporter", or select backend "native" for mutation',
+        WorkflowErrorCode.SCRIPT_VALIDATION_ERROR,
+        { recoverable: false },
+      );
+    }
     // Tier routing is resolved synchronously from this run's memoized config so
     // request-field compatibility is checked before workflow.ts reserves a slot
     // or emits onAgentStart. Agent.run() still resolves the spec against the
@@ -707,6 +726,7 @@ export class WorkflowAgent {
     prompt: string,
     options: AgentRunOptions<TSchemaDef> = {},
   ): Promise<AgentRunResult<TSchemaDef>> {
+    this.preflight(options);
     const capture: StructuredOutputCapture<any> = { called: false, value: undefined };
     // Per-call cwd (e.g. a worktree) needs coding tools bound to that directory,
     // since tools capture their cwd at construction and can't be relocated.

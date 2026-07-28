@@ -37,17 +37,17 @@ const bridgeUrl = new URL("./src/slash/prompt-template-bridge.ts", piSubagentsEn
 const { registerPromptTemplateDelegationBridge } = (await import(bridgeUrl.href)) as BridgeModule;
 
 const delegatedScript = `export const meta = { name: 'delegated_lifecycle', description: 'delegated lifecycle' }
-const value = await agent('delegated task', { backend: 'pi-subagents', agentType: 'delegate' })
+const value = await agent('delegated task', { backend: 'pi-subagents', agentType: 'analyst' })
 return { value }`;
 
 const strictDelegatedScript = `export const meta = { name: 'strict_delegated_lifecycle', description: 'strict delegated lifecycle' }
-const value = await agent('delegated task', { backend: 'pi-subagents', agentType: 'delegate' })
+const value = await agent('delegated task', { backend: 'pi-subagents', agentType: 'analyst' })
 if (value === null) throw new Error('delegated child failed')
 return { value }`;
 
 const parallelScript = `export const meta = { name: 'delegated_parallel', description: 'delegated parallel' }
 const values = await parallel([
-  () => agent('first', { backend: 'pi-subagents', agentType: 'scout' }),
+  () => agent('first', { backend: 'pi-subagents', agentType: 'researcher' }),
   () => agent('second', { backend: 'pi-subagents', agentType: 'reviewer' }),
 ])
 return { values }`;
@@ -172,7 +172,7 @@ test(
       const result = await manager.runSync(parallelScript, undefined, { concurrency: 2 });
       assert.equal(seen.size, 2);
       const values = (result.result as { values: string[] }).values;
-      assert.match(values[0] ?? "", /^scout:.*first$/s);
+      assert.match(values[0] ?? "", /^researcher:.*first$/s);
       assert.match(values[1] ?? "", /^reviewer:.*second$/s);
     } finally {
       registration.dispose();
@@ -312,7 +312,7 @@ test(
 );
 
 test(
-  "resume replays the completed delegated prefix and reruns only the failed suffix",
+  "resume reruns delegated calls because cached text is not durable effect evidence",
   withHarness(async ({ cwd, bus, manager }) => {
     const calls: string[] = [];
     let failSecond = true;
@@ -335,8 +335,8 @@ test(
       },
     });
     const script = `export const meta = { name: 'delegated_resume', description: 'delegated resume' }
-const first = await agent('first', { backend: 'pi-subagents' })
-const second = await agent('second', { backend: 'pi-subagents' })
+const first = await agent('first', { backend: 'pi-subagents', agentType: 'analyst' })
+const second = await agent('second', { backend: 'pi-subagents', agentType: 'analyst' })
 if (second === null) throw new Error('retry me')
 return { first, second }`;
     const started = manager.startInBackground(script);
@@ -344,7 +344,7 @@ return { first, second }`;
     failSecond = false;
     assert.equal(await manager.resume(started.runId), true);
     await waitFor(() => manager.getRun(started.runId)?.status === "completed", "resumed run did not complete");
-    assert.deepEqual(calls, ["first", "second", "second"]);
+    assert.deepEqual(calls, ["first", "second", "first", "second"]);
     registration.dispose();
   }),
 );

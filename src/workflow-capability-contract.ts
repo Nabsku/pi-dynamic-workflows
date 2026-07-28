@@ -184,6 +184,7 @@ const AGENT_OPTIONS: OptionShape = {
     option("backend", '"native" | "pi-subagents"', true, '"native"', [
       "pi-subagents is opt-in and requires its public v1 bridge in the same Pi process",
       "the delegated child bridge is foreground-only, but its owning workflow supports foreground and background invocation",
+      "pi-subagents is limited to analyst, researcher, reviewer, and reporter roles; mutation and worktree isolation fail closed",
       "pi-subagents does not support schema, workflow shared-store child tools, or workflow custom toolsets",
     ]),
     option("timeoutMs", "number | null", true, "run timeout; null disables"),
@@ -313,6 +314,7 @@ const capabilities: readonly CapabilityDescriptor[] = [
       "schema noncompliance after bounded structured-output repair is nonrecoverable and bypasses agent retries",
       "per-agent retries override invocation retries; retries are floored and clamped to 0..3",
       "resume replays only the longest unchanged prefix; the first miss and every later call execute live",
+      "delegated and worktree-isolated calls always execute live on resume because cached text is not durable effect evidence",
       "selector priority is explicit model > agentType model > tier > phase model > metadata model > implicit medium > session default",
       "if the selected model or route is unavailable, execution falls directly to the session default rather than trying lower-priority selectors",
       "worktree isolation is best-effort; failure logs that isolation was ignored and continues without an isolated working directory",
