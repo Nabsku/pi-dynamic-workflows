@@ -104,6 +104,16 @@ function renderPersistedStatus(run: PersistedRunState): string {
     const icon =
       agent.status === "done" ? "✓" : agent.status === "error" ? "✗" : agent.status === "running" ? "◆" : "·";
     lines.push(`  ${icon} ${agent.label}`);
+    const delegated = agent.delegatedDiagnostics;
+    if (delegated) {
+      lines.push(`    backend: ${delegated.backend} · role: ${delegated.role} (${delegated.roleSemantics})`);
+      if (delegated.effectiveModel)
+        lines.push(`    effective model: ${delegated.effectiveModel} (${delegated.modelPrecedence} precedence)`);
+      lines.push(`    provider status: ${delegated.providerStatus} · provenance: bridge-reported`);
+      if (delegated.usage) lines.push(`    usage: ${delegated.usage.total} tokens (${delegated.usage.provenance})`);
+      if (delegated.error) lines.push(`    error: ${delegated.error}`);
+      if (delegated.recoveryHint) lines.push(`    recovery: ${delegated.recoveryHint}`);
+    }
   }
   const tokenSegment = fmtTokenSegment(tokenFigures(run.tokenUsage), fmtFull);
   if (tokenSegment) lines.push(`  tokens: ${tokenSegment}`);

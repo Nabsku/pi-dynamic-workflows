@@ -18,6 +18,7 @@ import { DEFAULT_AGENT_TIMEOUT_MS, MAX_AGENT_RETRIES, MAX_AGENTS_PER_RUN, MAX_CO
 import { WorkflowError, WorkflowErrorCode, wrapError } from "./errors.js";
 import { createWorkflowLogger } from "./logger.js";
 import { parseModelRoutingFromMeta, resolveModelForPhase } from "./model-routing.js";
+import type { PiSubagentsDiagnosticDetails } from "./pi-subagents-backend.js";
 import { createAgentStoreTools, SharedStore } from "./shared-store.js";
 import { WORKFLOW_CAPABILITY_CONTRACT, type WorkflowRuntimeImplementations } from "./workflow-capability-contract.js";
 import { createWorktree, removeWorktree, type Worktree } from "./worktree.js";
@@ -83,6 +84,8 @@ export interface JournalEntry {
    * which agent finished first. Absent on older journal entries.
    */
   storeDelta?: Record<string, unknown>;
+  /** Canonical delegated result metadata retained across replay/resume. */
+  delegatedDiagnostics?: PiSubagentsDiagnosticDetails;
 }
 
 /**
@@ -259,6 +262,7 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
     error?: string;
     errorCode?: WorkflowErrorCode;
     recoverable?: boolean;
+    delegatedDiagnostics?: PiSubagentsDiagnosticDetails;
   }) => void;
   onAgentHistory?: (event: { id: string; label: string; phase?: string; history: AgentHistoryEntry[] }) => void;
   onTokenUsage?: (usage: AgentUsage) => void;
@@ -669,6 +673,7 @@ export async function runWorkflow<T = unknown>(
         result: cached.result,
         tokens: 0,
         model: displayModel,
+        delegatedDiagnostics: cached.delegatedDiagnostics,
       });
       // Apply this agent's write delta so live agents later in the run see a
       // consistent store. Additive apply preserves parallel-agent writes that
@@ -704,6 +709,7 @@ export async function runWorkflow<T = unknown>(
       // estimate when the provider reports no usage (total === 0). Usage is reset
       // per retry attempt so a failed attempt does not double-count the next one.
       let usage: AgentUsage | undefined;
+      let delegatedDiagnostics: PiSubagentsDiagnosticDetails | undefined;
       const recordTokens = (result: unknown): number => {
         const tokens = usage && usage.total > 0 ? usage.total : estimateTokens(result) + estimateTokens(prompt);
         if (usage) {
@@ -733,6 +739,7 @@ export async function runWorkflow<T = unknown>(
       try {
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
           usage = undefined;
+          delegatedDiagnostics = undefined;
           const externalSignal = options.signal;
           let onExternalAbort: (() => void) | undefined;
           let onRunFatal: (() => void) | undefined;
@@ -799,6 +806,16 @@ export async function runWorkflow<T = unknown>(
               onHistory: (history: AgentHistoryEntry[]) => {
                 options.onAgentHistory?.({ id: deltaKey, label, phase: assignedPhase, history });
               },
+              modelPrecedence: agentOptions.model
+                ? "explicit"
+                : agentOptions.tier
+                  ? "tier"
+                  : modelSpec
+                    ? "phase"
+                    : "session",
+              onDiagnostics: (details: PiSubagentsDiagnosticDetails) => {
+                delegatedDiagnostics = details;
+              },
             });
             // After a timeout the run() promise still settles later, rejecting with
             // "aborted" once agentController fires; the race has already resolved,
@@ -821,6 +838,7 @@ export async function runWorkflow<T = unknown>(
               hash: callHash,
               result,
               storeDelta: store.commitDelta(deltaKey),
+              delegatedDiagnostics,
             });
             options.onAgentEnd?.({
               id: deltaKey,
@@ -831,6 +849,7 @@ export async function runWorkflow<T = unknown>(
               tokenUsage: usage,
               worktree: runCwd,
               model: displayModel,
+              delegatedDiagnostics,
             });
             return result;
           } catch (error) {
@@ -875,6 +894,7 @@ export async function runWorkflow<T = unknown>(
               error: workflowError.message,
               errorCode: workflowError.code,
               recoverable: workflowError.recoverable,
+              delegatedDiagnostics,
             });
 
             if (workflowError.recoverable) {

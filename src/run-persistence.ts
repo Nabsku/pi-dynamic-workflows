@@ -15,6 +15,7 @@ import {
   unlinkIfExistsSafe,
   writeJsonAtomicWithBackup,
 } from "./fs-persistence.js";
+import type { PiSubagentsDiagnosticDetails } from "./pi-subagents-backend.js";
 import { workflowProjectPaths } from "./workflow-paths.js";
 
 export type RunStatus = "pending" | "running" | "paused" | "completed" | "failed" | "aborted";
@@ -42,6 +43,7 @@ export interface PersistedAgentState {
   tokenUsage?: AgentUsage;
   /** The model this agent ran on (provider/id), when known. */
   model?: string;
+  delegatedDiagnostics?: PiSubagentsDiagnosticDetails;
 }
 
 export interface PersistedRunState {
@@ -89,6 +91,7 @@ export interface PersistedRunState {
     hash: string;
     result: unknown;
     storeDelta?: Record<string, unknown>;
+    delegatedDiagnostics?: PiSubagentsDiagnosticDetails;
   }>;
   /**
    * Opt-out of auto-resume for this run (default true, i.e. eligible unless

@@ -100,7 +100,15 @@ test(
     assert.equal(requests.length, 2);
     const completion = new Promise<void>((resolve) => manager.once("complete", () => resolve()));
     for (const request of requests.splice(0)) {
-      bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(request.requestId, request.agent));
+      bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, {
+        ...response(request.requestId, request.agent),
+        runId: `child-${request.agent}`,
+        model: "vendor/effective",
+        turns: 2,
+        toolCount: 1,
+        durationMs: 25,
+        tokens: 7,
+      });
     }
     await completion;
     assert.equal(manager.getRun(runId)?.status, "completed");
@@ -108,6 +116,29 @@ test(
       first: "worker",
       second: "reviewer",
     });
+    const persisted = manager.getPersistence().load(runId);
+    assert.deepEqual(
+      persisted?.agents.map((agent) => ({
+        role: agent.delegatedDiagnostics?.role,
+        status: agent.delegatedDiagnostics?.providerStatus,
+        model: agent.delegatedDiagnostics?.effectiveModel,
+        usage: agent.delegatedDiagnostics?.usage,
+      })),
+      [
+        {
+          role: "worker",
+          status: "completed",
+          model: "vendor/effective",
+          usage: { total: 7, provenance: "pi-subagents-v1" },
+        },
+        {
+          role: "reviewer",
+          status: "completed",
+          model: "vendor/effective",
+          usage: { total: 7, provenance: "pi-subagents-v1" },
+        },
+      ],
+    );
   }),
 );
 
@@ -155,6 +186,13 @@ test(
         assert.deepEqual(JSON.parse(JSON.stringify(result.result)), { first: null, second: null });
       }
       assert.equal(manager.listRuns().find(({ runId }) => runId === run.runId)?.status, expectedStatus);
+      const diagnostics = manager.getPersistence().load(run.runId)?.agents.at(-1)?.delegatedDiagnostics;
+      assert.equal(diagnostics?.providerStatus, status);
+      assert.equal(diagnostics?.role, "delegate");
+      if (status === "invalid_request") {
+        assert.equal(diagnostics?.error, "offline provider failure");
+        assert.match(diagnostics?.recoveryHint ?? "", /correct/i);
+      }
     }
   }),
 );
@@ -203,5 +241,16 @@ test(
       first: "first-result",
       second: "second-result",
     });
+    const finalAgents = manager.getPersistence().load(run.runId)?.agents ?? [];
+    assert.equal(
+      finalAgents[0]?.delegatedDiagnostics?.providerStatus,
+      "completed",
+      "journal replay retains diagnostics",
+    );
+    assert.equal(
+      finalAgents[1]?.delegatedDiagnostics?.providerStatus,
+      "completed",
+      "resumed live result persists diagnostics",
+    );
   }),
 );

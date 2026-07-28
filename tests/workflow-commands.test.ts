@@ -169,6 +169,47 @@ test("/workflows status <id> renders a persisted run", async () => {
   assert.match(h.printed[0], /scan files/);
 });
 
+test("/workflows status renders canonical delegated diagnostics and recovery", async () => {
+  const h = harness({
+    listRuns: () => [
+      {
+        runId: "run-delegated",
+        workflowName: "audit",
+        status: "failed",
+        phases: [],
+        logs: [],
+        agents: [
+          {
+            id: 1,
+            label: "review",
+            status: "error",
+            prompt: "x",
+            delegatedDiagnostics: {
+              backend: "pi-subagents",
+              providerStatus: "timed_out",
+              providerId: "pi-subagents/prompt-template-bridge",
+              providerGeneration: 1,
+              protocol: 1,
+              role: "reviewer",
+              roleSemantics: "pi-subagents-provider-role",
+              effectiveModel: "vendor/model",
+              modelPrecedence: "explicit",
+              usage: { total: 9, provenance: "pi-subagents-v1" },
+              recoveryHint: "Increase timeoutMs or reduce the delegated task scope, then retry.",
+            },
+          },
+        ],
+      },
+    ],
+  });
+  await h.run("status run-delegated");
+  assert.match(h.printed[0], /backend: pi-subagents/);
+  assert.match(h.printed[0], /role: reviewer \(pi-subagents-provider-role\)/);
+  assert.match(h.printed[0], /effective model: vendor\/model \(explicit precedence\)/);
+  assert.match(h.printed[0], /provider status: timed_out · provenance: bridge-reported/);
+  assert.match(h.printed[0], /recovery: Increase timeoutMs/);
+});
+
 test("/workflows status without id warns", async () => {
   const h = harness();
   await h.run("status");

@@ -95,11 +95,18 @@ test("pi-subagents backend sends only protocol v1 and maps start/update/usage/hi
   assert.equal(models.at(-1), "vendor/resolved");
   assert.deepEqual(usages.at(-1), { total: 21, provenance: "pi-subagents-v1" });
   assert.ok(histories.flat().some((h: any) => h.text.includes("working")));
-  assert.deepEqual(diagnostics.at(-1), {
-    model: "vendor/resolved",
-    sessionFile: "/tmp/session.jsonl",
-    outputPath: "/tmp/output.md",
-  });
+  assert.equal(diagnostics.at(-1).backend, "pi-subagents");
+  assert.equal(diagnostics.at(-1).providerStatus, "completed");
+  assert.equal(diagnostics.at(-1).providerId, "pi-subagents/prompt-template-bridge");
+  assert.equal(diagnostics.at(-1).protocol, 1);
+  assert.equal(diagnostics.at(-1).role, "delegate");
+  assert.equal(diagnostics.at(-1).roleSemantics, "pi-subagents-provider-role");
+  assert.equal(diagnostics.at(-1).requestedModel, "vendor/resolved");
+  assert.equal(diagnostics.at(-1).effectiveModel, "vendor/resolved");
+  assert.equal(diagnostics.at(-1).modelPrecedence, "explicit");
+  assert.deepEqual(diagnostics.at(-1).usage, { total: 21, provenance: "pi-subagents-v1" });
+  assert.equal(diagnostics.at(-1).sessionFile, "/tmp/session.jsonl");
+  assert.equal(diagnostics.at(-1).outputPath, "/tmp/output.md");
   assert.equal(count(), 1, "only the test request listener remains");
 });
 
@@ -599,4 +606,81 @@ return { native, delegated }`,
   assert.equal((result.result as any).native, "native:alpha");
   assert.equal((result.result as any).delegated, "delegated:beta");
   assert.equal(result.agentCount, 2);
+});
+
+test("pi-subagents preserves bounded canonical terminal metadata and sanitizes persisted copy", async () => {
+  const bus = reviewedBus();
+  let diagnostics: any;
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
+    bus.emit(
+      PI_SUBAGENTS_RESPONSE_EVENT,
+      response(raw.requestId, {
+        status: "failed",
+        error: " provider\nsecret\u0000detail ",
+        runId: "provider-run",
+        model: "vendor/effective",
+        turns: 3,
+        toolCount: 4,
+        durationMs: 500,
+        tokens: 42,
+        warnings: Array.from({ length: 12 }, (_, index) => `warning\n${index}`),
+        acceptance: { status: "rejected" },
+        review: { status: "blockers" },
+        effects: { fileMutation: { status: "observed", expected: true, attempted: true } },
+      }),
+    );
+  });
+  await assert.rejects(
+    new PiSubagentsBackend(bus).run("task", {
+      cwd: "/repo",
+      agentType: "reviewer",
+      modelPrecedence: "tier",
+      onDiagnostics: (value) => (diagnostics = value),
+    }),
+  );
+  assert.equal(diagnostics.providerStatus, "failed");
+  assert.equal(diagnostics.role, "reviewer");
+  assert.equal(diagnostics.roleSemantics, "pi-subagents-provider-role");
+  assert.equal(diagnostics.effectiveModel, "vendor/effective");
+  assert.equal(diagnostics.modelPrecedence, "tier");
+  assert.deepEqual(diagnostics.usage, { total: 42, provenance: "pi-subagents-v1" });
+  assert.equal(diagnostics.warnings.length, 10);
+  assert.ok(
+    diagnostics.warnings.every((warning: string) => [...warning].every((character) => character.charCodeAt(0) > 31)),
+  );
+  assert.equal(diagnostics.error, "provider secret detail");
+  assert.match(diagnostics.recoveryHint, /inspect/i);
+  assert.deepEqual(diagnostics.acceptance, { status: "rejected" });
+});
+
+test("pi-subagents diagnostics survive journal replay without a second provider request", async () => {
+  const bus = reviewedBus();
+  let requests = 0;
+  const journal: any[] = [];
+  bus.on(PI_SUBAGENTS_REQUEST_EVENT, (raw: any) => {
+    requests++;
+    bus.emit(PI_SUBAGENTS_RESPONSE_EVENT, response(raw.requestId, { runId: "child-1", turns: 2, toolCount: 1 }));
+  });
+  const script = `export const meta = { name: 'diagnostics_replay', description: 'diagnostics replay' }
+return await agent('task', { backend: 'pi-subagents', agentType: 'reviewer' })`;
+  await runWorkflow(script, {
+    cwd: "/repo",
+    piSubagentsEvents: bus,
+    persistLogs: false,
+    runId: "diag-run",
+    onAgentJournal: (entry) => journal.push(entry),
+  });
+  let replayed: any;
+  await runWorkflow(script, {
+    cwd: "/repo",
+    piSubagentsEvents: bus,
+    persistLogs: false,
+    runId: "diag-run",
+    resumeJournal: new Map(journal.map((entry) => [`${entry.runId}:${entry.index}`, entry])),
+    onAgentEnd: (event) => (replayed = event.delegatedDiagnostics),
+  });
+  assert.equal(requests, 1);
+  assert.equal(replayed.runId, "child-1");
+  assert.equal(replayed.providerStatus, "completed");
+  assert.equal(replayed.role, "reviewer");
 });

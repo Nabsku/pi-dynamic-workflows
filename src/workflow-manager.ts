@@ -739,6 +739,7 @@ export class WorkflowManager extends EventEmitter {
             agent.tokens = event.tokens;
             if (event.tokenUsage) agent.tokenUsage = event.tokenUsage;
             if (event.model) agent.model = event.model;
+            if (event.delegatedDiagnostics) agent.delegatedDiagnostics = event.delegatedDiagnostics;
             // Real per-agent end time — only terminal agents get one; a still-
             // running agent's entry keeps endedAt undefined.
             const ts = managed.agentTimestamps.get(agent.id);

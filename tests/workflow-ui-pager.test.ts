@@ -136,6 +136,36 @@ test("active agents show their prompt and two latest history events", () => {
   assert.doesNotMatch(summary, /old event/);
 });
 
+test("delegated agent detail shows backend role model provenance and recovery", () => {
+  const model = modelForAgent({
+    id: 1,
+    label: "delegated reviewer",
+    phase: "Work",
+    prompt: "review",
+    status: "error",
+    delegatedDiagnostics: {
+      backend: "pi-subagents",
+      providerStatus: "timed_out",
+      providerId: "pi-subagents/prompt-template-bridge",
+      providerGeneration: 1,
+      protocol: 1,
+      role: "reviewer",
+      roleSemantics: "pi-subagents-provider-role",
+      effectiveModel: "vendor/model",
+      modelPrecedence: "tier",
+      recoveryHint: "Increase timeoutMs or reduce the delegated task scope, then retry.",
+    },
+  });
+  const state = enterAgentDetail(model);
+  const summary = renderNavigator(state, model, 100, undefined, 30).join("\n");
+  assert.match(summary, /Backend: pi-subagents · role reviewer \(pi-subagents-provider-role\)/);
+  assert.match(summary, /Provider status: timed_out · bridge-reported provenance/);
+  assert.match(summary, /Recovery: Increase timeoutMs/);
+  state.togglePager();
+  const pager = renderNavigator(state, model, 100, undefined, 30).join("\n");
+  assert.match(pager, /Effective model: vendor\/model \(tier precedence\)/);
+});
+
 test("tail mode follows appended history and scrolling up disables follow", () => {
   const history: AgentHistoryEntry[] = Array.from({ length: 20 }, (_, index) => ({
     role: "assistant",

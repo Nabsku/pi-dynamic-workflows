@@ -1114,6 +1114,14 @@ function renderNavigatorFrame(
       if (state.pagerOpen) {
         body.push(dim("Status: ") + asText(a.status ?? ""));
         if (a.model) body.push(dim("Model: ") + (shortModel(a.model) ?? ""));
+        if (a.delegatedDiagnostics) {
+          const d = a.delegatedDiagnostics;
+          body.push(`${dim("Backend: ")}${d.backend} · role ${d.role} (${d.roleSemantics})`);
+          if (d.effectiveModel)
+            body.push(`${dim("Effective model: ")}${d.effectiveModel} (${d.modelPrecedence} precedence)`);
+          body.push(`${dim("Provider status: ")}${d.providerStatus} · bridge-reported provenance`);
+          if (d.recoveryHint) body.push(dim("Recovery: ") + d.recoveryHint);
+        }
         if (a.error) body.push(dim("Error: ") + asText(a.error));
         if (a.errorCode) {
           body.push(`${dim("Error code: ")}${asText(a.errorCode)}${a.recoverable ? " (recoverable)" : ""}`);
@@ -1139,6 +1147,12 @@ function renderNavigatorFrame(
         // Active/failed agents default to context plus the latest two events.
         body.push(dim("Status: ") + asText(a.status ?? ""));
         if (a.model) body.push(dim("Model: ") + (shortModel(a.model) ?? ""));
+        if (a.delegatedDiagnostics) {
+          const d = a.delegatedDiagnostics;
+          body.push(`${dim("Backend: ")}${d.backend} · role ${d.role} (${d.roleSemantics})`);
+          body.push(`${dim("Provider status: ")}${d.providerStatus} · bridge-reported provenance`);
+          if (d.recoveryHint) body.push(dim("Recovery: ") + d.recoveryHint);
+        }
         if (a.error) body.push(dim("Error: ") + asText(a.error));
         if (a.errorCode) {
           body.push(`${dim("Error code: ")}${asText(a.errorCode)}${a.recoverable ? " (recoverable)" : ""}`);
